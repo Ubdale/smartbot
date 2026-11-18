@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LLMProviderName = Literal["ollama", "gemini", "groq"]
@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     # Datasets
     data_dir: Path = Path("./data")
     max_upload_mb: int = Field(default=20, ge=1, le=200)
+
+    @field_validator("database_url")
+    @classmethod
+    def _use_psycopg3(cls, v: str) -> str:
+        # Providers like Neon hand out plain postgres(ql):// URLs; SQLAlchemy would pick psycopg2.
+        for prefix in ("postgresql://", "postgres://"):
+            if v.startswith(prefix):
+                return "postgresql+psycopg://" + v.removeprefix(prefix)
+        return v
 
     @model_validator(mode="after")
     def _require_real_secret_in_prod(self) -> Self:

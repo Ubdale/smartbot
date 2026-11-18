@@ -55,7 +55,9 @@ uv run mypy              # type check
 uv run alembic revision --autogenerate -m "message"   # new migration
 ```
 
-CI (GitHub Actions) runs ruff, mypy and pytest on every push, then builds the Docker image and smoke-tests `/health`.
+CI (GitHub Actions) runs ruff, mypy and pytest on every push, on SQLite **and** on a throwaway Postgres 17 container. It also checks that migrations match the models, then builds the Docker image and smoke-tests `/health`.
+
+To run the tests against your own throwaway Postgres, set `TEST_DATABASE_URL`. **Never point it at real data**: tables are dropped between tests. Tests never use `DATABASE_URL` from `.env`.
 
 ## Configuration
 
@@ -63,7 +65,7 @@ Every setting is listed in [.env.example](.env.example). The main ones:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `DATABASE_URL` | `sqlite:///./data/askdata.db` | Set a Postgres URL to switch. |
+| `DATABASE_URL` | `sqlite:///./data/askdata.db` | Paste a Postgres/Neon URL to switch, then run `uv run alembic upgrade head` |
 | `LLM_PROVIDER` | `ollama` | `ollama`, `gemini` or `groq` |
 | `LLM_MODEL` | `qwen2.5:7b-instruct` | Model name for the chosen provider |
 | `SECRET_KEY` | — | **Must be changed** outside dev |

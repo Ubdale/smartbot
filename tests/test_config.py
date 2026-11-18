@@ -20,6 +20,19 @@ def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     assert not s.is_sqlite
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://u:p@ep-x.neon.tech/neondb?sslmode=require",
+        "postgres://u:p@ep-x.neon.tech/neondb?sslmode=require",
+    ],
+)
+def test_plain_postgres_urls_use_psycopg3(monkeypatch: pytest.MonkeyPatch, url: str) -> None:
+    monkeypatch.setenv("DATABASE_URL", url)
+    s = Settings(_env_file=None)
+    assert s.database_url == "postgresql+psycopg://u:p@ep-x.neon.tech/neondb?sslmode=require"
+
+
 def test_prod_requires_real_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "prod")
     with pytest.raises(ValueError, match="SECRET_KEY"):

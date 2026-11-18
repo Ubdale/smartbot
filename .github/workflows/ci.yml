@@ -20,7 +20,43 @@ jobs:
         run: uv run ruff format --check .
       - name: Mypy
         run: uv run mypy
-      - name: Pytest
+      - name: Pytest (SQLite)
+        run: uv run pytest
+
+  # Same suite on real Postgres (production uses Neon). Throwaway container, no secrets.
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: askdata
+          POSTGRES_PASSWORD: askdata
+          POSTGRES_DB: askdata_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U askdata"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://askdata:askdata@localhost:5432/askdata_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - name: Install Python and dependencies
+        run: uv sync --frozen
+      - name: Migrations apply cleanly and match models
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+          uv run alembic downgrade base
+      - name: Pytest (Postgres)
         run: uv run pytest
 
   docker:
