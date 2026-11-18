@@ -11,7 +11,7 @@ Everything runs on free tools: SQLite, a local Ollama model, and the free tiers 
 ## How it fits together
 
 ```
-Browser ──> Next.js app (frontend/, Vercel)
+Browser ──> Next.js app (github.com/Ubdale/chatbot-fe, Vercel)
               │  /api/* forwarded (same origin: HttpOnly cookie, no CORS)
               v
             FastAPI (app/, Render) ──> Postgres/SQLite: users, datasets, chats, usage
@@ -34,10 +34,11 @@ uv run uvicorn app.main:app --reload
 
 Open http://localhost:8000/health or http://localhost:8000/docs.
 
-Then start the web app in a second terminal (see [frontend/README.md](frontend/README.md)):
+Then start the web app from its own repo, [Ubdale/chatbot-fe](https://github.com/Ubdale/chatbot-fe), in a second terminal:
 
 ```bash
-cd frontend && npm install && npm run dev     # http://localhost:3000
+git clone https://github.com/Ubdale/chatbot-fe.git && cd chatbot-fe
+npm install && npm run dev     # http://localhost:3000, forwards /api to http://localhost:8000
 ```
 
 ### Local LLM (Ollama)
@@ -124,7 +125,7 @@ uv run mypy              # type check
 uv run alembic revision --autogenerate -m "message"   # new migration
 ```
 
-CI (GitHub Actions) runs ruff, mypy and pytest on every push, on SQLite **and** on a throwaway Postgres 17 container. It also lints, type-checks and builds the frontend. It also checks that migrations match the models, then builds the Docker image and smoke-tests `/health`.
+CI (GitHub Actions) runs ruff, mypy and pytest on every push, on SQLite **and** on a throwaway Postgres 17 container. It also checks that migrations match the models, then builds the Docker image and smoke-tests `/health`.
 
 To run the tests against your own throwaway Postgres, set `TEST_DATABASE_URL`. **Never point it at real data**: tables are dropped between tests. Tests never use `DATABASE_URL` from `.env`.
 
