@@ -20,12 +20,15 @@ class OllamaProvider(LLMProvider):
         *,
         num_gpu: int | None = None,
         timeout_seconds: float = 300,
+        api_key: str | None = None,
     ) -> None:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.num_gpu = num_gpu
+        self.timeout_seconds = timeout_seconds
         timeout = httpx.Timeout(connect=5.0, read=timeout_seconds, write=30.0, pool=5.0)
-        self._client = client or httpx.Client(timeout=timeout)
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        self._client = client or httpx.Client(timeout=timeout, headers=headers)
 
     def complete(
         self,
@@ -57,6 +60,8 @@ class OllamaProvider(LLMProvider):
             raise LLMUnavailableError(
                 f"Can't reach Ollama at {self.base_url}. Is it running (`ollama serve`)?"
             ) from exc
+        if resp.status_code in (401, 403):
+            raise LLMUnavailableError("The model server rejected OLLAMA_API_KEY.")
         if resp.status_code == 404:
             raise LLMUnavailableError(
                 f"Ollama doesn't have the model {self.model!r}. Run: ollama pull {self.model}"

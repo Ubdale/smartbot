@@ -115,7 +115,7 @@ uv run python scripts/generate_sample_data.py
 | Web app ([Ubdale/chatbot-fe](https://github.com/Ubdale/chatbot-fe)) | Vercel | Forwards `/api/*` to Render. Proxied requests time out after 120 s. |
 | Database | Neon Postgres | Use the **direct** connection string, not `-pooler` |
 | Uploaded files | Neon object storage (S3-compatible) | Survives Render restarts |
-| LLM | Gemini free tier | About **5 questions per minute for the whole app** (5 requests/min per model) |
+| LLM | Your own model on Oracle Cloud Always Free ([deploy/oracle](deploy/oracle/README.md)), or Gemini free tier | Own model: private, no quota, ~15-40 s per question. Gemini: about **5 questions/minute for the whole app**. Groq as automatic backup (`LLM_FALLBACK_PROVIDER=groq`) |
 
 ### 1. Database
 
@@ -186,5 +186,6 @@ Every setting is listed in [.env.example](.env.example). The main ones:
 | `LLM_FALLBACK_PROVIDER` | empty | Backup when the main provider is down or out of quota, e.g. `groq` behind `gemini` |
 | `STORAGE_BACKEND` | `local` | `s3` keeps uploads in S3-compatible storage (needs `S3_*`/`AWS_*` settings) |
 | `OLLAMA_NUM_GPU` | unset | `0` = CPU only (fixes GPU out-of-memory crashes on small GPUs) |
-| `OLLAMA_TIMEOUT_SECONDS` | `300` | How long to wait for the local model |
+| `OLLAMA_TIMEOUT_SECONDS` | `300` | How long to wait for the local model (capped at 60 s when a fallback provider is set) |
+| `OLLAMA_API_KEY` | empty | Bearer token for a self-hosted Ollama behind Caddy ([deploy/oracle](deploy/oracle/README.md)) |
 | `SECRET_KEY` | — | **Must be changed** outside dev |

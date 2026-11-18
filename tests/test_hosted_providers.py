@@ -300,3 +300,43 @@ def test_prod_needs_fallback_key_too() -> None:
             gemini_api_key="k",
             llm_fallback_provider="groq",
         )
+
+
+# --- self-hosted Ollama (e.g. Oracle) behind a token-checking proxy --------------------
+
+
+def test_ollama_sends_bearer_token_and_explains_rejection() -> None:
+    seen: dict[str, str] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["auth"] = req.headers.get("authorization", "")
+        return httpx.Response(401)
+
+    s = Settings(_env_file=None, ollama_base_url="https://1-2-3-4.sslip.io",
+                 ollama_api_key="secret-token")  # fmt: skip
+    p = make_provider(s)
+    assert isinstance(p, OllamaProvider)
+    p._client = httpx.Client(
+        transport=httpx.MockTransport(handler), headers=dict(p._client.headers)
+    )
+    with pytest.raises(LLMUnavailableError, match="OLLAMA_API_KEY"):
+        p.complete(MESSAGES)
+    assert seen["auth"] == "Bearer secret-token"
+
+
+def test_own_model_gives_up_early_when_groq_is_the_backup() -> None:
+    from app.llm.factory import FallbackProvider
+
+    with_backup = Settings(_env_file=None, llm_fallback_provider="groq", groq_api_key="g")
+    chain = make_provider(with_backup)
+    assert isinstance(chain, FallbackProvider)
+    own = chain.providers[0]
+    assert isinstance(own, OllamaProvider)
+    assert own.timeout_seconds == 60
+    summary_chain = make_provider(with_backup, summary=True)
+    assert isinstance(summary_chain, FallbackProvider)
+    assert getattr(summary_chain.providers[0], "timeout_seconds", None) == 30
+
+    alone = make_provider(Settings(_env_file=None))
+    assert isinstance(alone, OllamaProvider)
+    assert alone.timeout_seconds == 300  # nothing to fall back to: be patient

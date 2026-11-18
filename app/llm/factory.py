@@ -67,6 +67,10 @@ class FallbackProvider(LLMProvider):
         return self._first_available(lambda p: p.summarize(question, description, table_text))
 
 
+# Seconds to wait for a self-hosted model before switching to the backup provider.
+OLLAMA_TIMEOUT_WITH_FALLBACK = {False: 60.0, True: 30.0}  # {summary?: seconds}
+
+
 def _check_model_family(provider: str, model: str) -> None:
     """Catch a leftover LLM_MODEL from another provider (e.g. an Ollama tag on Gemini)."""
     wrong = (provider == "gemini" and not model.startswith("gemini")) or (
@@ -87,15 +91,23 @@ def _model_for(settings: Settings, provider: str, summary: bool) -> str:
     return DEFAULT_MODELS[provider]
 
 
-def _single(settings: Settings, provider: str, *, summary: bool, patient: bool) -> LLMProvider:
+def _single(
+    settings: Settings, provider: str, *, summary: bool, patient: bool, has_backup: bool = False
+) -> LLMProvider:
     model = _model_for(settings, provider, summary)
     _check_model_family(provider, model)
     if provider == "ollama":
+        timeout = settings.ollama_timeout_seconds
+        if has_backup:
+            # A backup is waiting: give up early so the whole request (plan + summary,
+            # possibly via the backup) fits Vercel's 120 s proxy limit.
+            timeout = min(timeout, OLLAMA_TIMEOUT_WITH_FALLBACK[summary])
         return OllamaProvider(
             model,
             settings.ollama_base_url,
             num_gpu=settings.ollama_num_gpu,
-            timeout_seconds=settings.ollama_timeout_seconds,
+            timeout_seconds=timeout,
+            api_key=settings.ollama_api_key.get_secret_value() if settings.ollama_api_key else None,
         )
     if provider == "gemini":
         if not settings.gemini_api_key:
@@ -118,7 +130,9 @@ def make_provider(settings: Settings, *, summary: bool = False) -> LLMProvider:
         return _single(settings, settings.llm_provider, summary=summary, patient=not summary)
     return FallbackProvider(
         [
-            _single(settings, settings.llm_provider, summary=summary, patient=False),
+            _single(
+                settings, settings.llm_provider, summary=summary, patient=False, has_backup=True
+            ),
             _single(settings, fallback, summary=summary, patient=not summary),
         ]
     )

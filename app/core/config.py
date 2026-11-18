@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     # otherwise crash with "CUDA out of memory"). Unset = let Ollama decide.
     ollama_num_gpu: int | None = None
     ollama_timeout_seconds: float = Field(default=300, gt=0)
+    # Bearer token for a self-hosted Ollama behind a reverse proxy (deploy/oracle). Ollama
+    # itself has no authentication, so never expose it to the internet without one.
+    ollama_api_key: SecretStr | None = None
     gemini_api_key: SecretStr | None = None
     groq_api_key: SecretStr | None = None
 
