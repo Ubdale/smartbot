@@ -20,6 +20,17 @@ def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     assert not s.is_sqlite
 
 
+def test_prod_requires_real_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "prod")
+    with pytest.raises(ValueError, match="SECRET_KEY"):
+        Settings(_env_file=None)
+    monkeypatch.setenv("SECRET_KEY", "short")
+    with pytest.raises(ValueError, match="SECRET_KEY"):
+        Settings(_env_file=None)
+    monkeypatch.setenv("SECRET_KEY", "x" * 40)
+    assert Settings(_env_file=None).app_env == "prod"
+
+
 def test_invalid_provider_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     with pytest.raises(ValueError, match="llm_provider"):

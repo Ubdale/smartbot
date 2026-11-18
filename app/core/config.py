@@ -2,12 +2,13 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LLMProviderName = Literal["ollama", "gemini", "groq"]
+DEFAULT_SECRET = "change-me-in-production"  # noqa: S105 - placeholder, rejected in prod
 
 
 class Settings(BaseSettings):
@@ -21,7 +22,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/askdata.db"
 
     # Security
-    secret_key: SecretStr = SecretStr("change-me-in-production")
+    secret_key: SecretStr = SecretStr(DEFAULT_SECRET)
     access_token_expire_minutes: int = 60 * 24
 
     # LLM
@@ -34,6 +35,15 @@ class Settings(BaseSettings):
     # Datasets
     data_dir: Path = Path("./data")
     max_upload_mb: int = Field(default=20, ge=1, le=200)
+
+    @model_validator(mode="after")
+    def _require_real_secret_in_prod(self) -> Self:
+        secret = self.secret_key.get_secret_value()
+        if self.app_env == "prod" and (secret == DEFAULT_SECRET or len(secret) < 32):
+            raise ValueError(
+                "SECRET_KEY must be set to a random value of at least 32 characters in prod"
+            )
+        return self
 
     @property
     def is_sqlite(self) -> bool:
