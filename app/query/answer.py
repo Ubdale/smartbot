@@ -98,6 +98,7 @@ def answer_question(
     parquet: Path,
     history: list[ChatMessage],
     today: date,
+    summarizer: LLMProvider | None = None,
 ) -> Answer:
     """Raises LLMUnavailableError if the model can't be reached during planning."""
     outcome = make_plan(
@@ -121,7 +122,7 @@ def answer_question(
         return Answer("failed", f"{exc} Try a narrower question.", vp, calls=outcome.calls)
 
     description = describe_plan(vp)
-    summary, source, calls = _summarize(llm, question, vp, result, description)
+    summary, source, calls = _summarize(summarizer or llm, question, vp, result, description)
     return Answer(
         "answered",
         summary,

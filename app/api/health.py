@@ -21,6 +21,7 @@ class HealthResponse(BaseModel):
     database: Literal["ok", "error"]
     llm_provider: str
     llm_model: str
+    storage: str
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -44,5 +45,6 @@ def health(
         env=settings.app_env,
         database=db_status,
         llm_provider=settings.llm_provider,
-        llm_model=settings.llm_model,
+        llm_model=settings.model_name,
+        storage=settings.storage_backend,
     )

@@ -238,3 +238,16 @@ def test_cache_hits_and_version_invalidation(sales: Any) -> None:
     assert not first.cached
     assert second.cached and second.rows == first.rows
     assert not other_version.cached
+
+
+@pytest.mark.parametrize("by", ["revenue", "sum_revenue", "Value", "sum"])
+def test_sort_by_metric_name_means_value(sales: Any, by: str) -> None:
+    vp, r = run(
+        sales,
+        {"metric": "sum", "metric_column": "revenue", "group_by": ["region"],
+         "sort": {"by": by, "direction": "asc"}},
+    )  # fmt: skip
+    assert vp.plan.sort is not None
+    assert vp.plan.sort.by == "value"
+    values = [row[1] for row in r.rows]
+    assert values == sorted(values)

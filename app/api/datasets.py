@@ -14,7 +14,7 @@ from app.connectors.profiling import preview_parquet
 from app.core.config import Settings
 from app.models import Dataset, User
 from app.schemas.dataset import DatasetOut, DatasetSummary, PreviewOut, UploadOut
-from app.storage import PARQUET_NAME, DatasetStorage
+from app.storage import PARQUET_NAME, DatasetStorage, StorageError, get_storage
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
@@ -23,7 +23,18 @@ PREVIEW_MAX = 200
 
 
 def _storage(settings: Settings) -> DatasetStorage:
-    return DatasetStorage(settings.data_dir)
+    return get_storage(settings)
+
+
+def require_parquet(settings: Settings, ds: Dataset) -> Path:
+    """The dataset's local Parquet file (fetched from remote storage if needed)."""
+    try:
+        path = _storage(settings).ensure_local(ds.workspace_id, ds.id)
+    except StorageError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    if path is None:
+        raise HTTPException(status.HTTP_410_GONE, "The dataset's data file is missing.")
+    return path
 
 
 def _too_large(settings: Settings) -> HTTPException:
@@ -87,6 +98,10 @@ async def upload_dataset(
             )
         except IngestError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        try:
+            await run_in_threadpool(storage.persist, user.workspace_id, dataset_id)
+        except StorageError as exc:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
         ds = Dataset(
             id=dataset_id,
@@ -134,10 +149,7 @@ def preview_dataset(
     limit: Annotated[int, Query(ge=1, le=PREVIEW_MAX)] = 50,
 ) -> PreviewOut:
     ds = _get_dataset(db, user, dataset_id)
-    path = _storage(settings).parquet_path(ds.workspace_id, ds.id)
-    if not path.exists():
-        raise HTTPException(status.HTTP_410_GONE, "The dataset's data file is missing.")
-    columns, rows = preview_parquet(path, limit)
+    columns, rows = preview_parquet(require_parquet(settings, ds), limit)
     return PreviewOut(dataset_id=ds.id, columns=columns, rows=rows, row_count=ds.row_count)
 
 

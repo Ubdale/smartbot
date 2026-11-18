@@ -138,26 +138,70 @@ def choose_chart(vp: ValidatedPlan, result: QueryResult) -> ChartSpec | None:
 # --- summaries ------------------------------------------------------------------------
 
 
+def metric_label(vp: ValidatedPlan) -> str:
+    """'total revenue', 'average annual_salary', 'number of distinct customer', 'count'."""
+    p = vp.plan
+    if p.metric == "count":
+        return "count"
+    if p.metric == "count_distinct":
+        return f"number of distinct {p.metric_column}"
+    return f"{_METRIC_WORDS[p.metric].lower()} {p.metric_column}"
+
+
+_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def period_label(value: Any, grain: str | None) -> str:
+    """'2025-01-01' -> 'Jan 2025' (month), 'Q1 2025' (quarter), '2025' (year)."""
+    text = fmt_value(value)
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", text)
+    if not m or grain not in ("month", "quarter", "year"):
+        return text
+    year, month = m[1], int(m[2])
+    if grain == "year":
+        return year
+    if grain == "quarter":
+        return f"Q{(month - 1) // 3 + 1} {year}"
+    return f"{_MONTHS[month - 1]} {year}"
+
+
 def fallback_summary(vp: ValidatedPlan, result: QueryResult) -> str:
     """A deterministic summary built only from the computed rows."""
     if not result.rows:
         return "No rows matched this question. Try widening the time period or removing a filter."
-    value_label = result.value_column.replace("_", " ")
+    what = metric_label(vp)
     if not result.dimensions:
-        return f"The {value_label} is {fmt_value(result.rows[0][-1])}."
-    n = len(result.rows)
-    top = result.rows[0]
-    label = " / ".join(fmt_value(v) for v in top[:-1])
-    if vp.plan.time_grain:
-        first, last = result.rows[0], result.rows[-1]
-        start, end = fmt_value(first[0]), fmt_value(last[0])
-        return (
-            f"{value_label.capitalize()} by {vp.plan.time_grain}: "
-            f"{fmt_value(first[-1])} in {start} and {fmt_value(last[-1])} in {end}, "
-            f"across {n} periods."
+        value = fmt_value(result.rows[0][-1])
+        if vp.plan.metric == "count":
+            return f"There are {value} matching rows."
+        return f"The {what} is {value}."
+
+    rows = [
+        r for r in result.rows if isinstance(r[-1], int | float) and not isinstance(r[-1], bool)
+    ]
+    grain = vp.plan.time_grain
+
+    def label(r: list[Any]) -> str:
+        parts = (
+            [period_label(r[0], grain)] + [fmt_value(v) for v in r[1:-1]]
+            if grain
+            else [fmt_value(v) for v in r[:-1]]
         )
-    more = " (more groups exist; showing the top ones)" if result.truncated else ""
-    return f"{label} comes first with {fmt_value(top[-1])} {value_label}, out of {n} groups{more}."
+        return " / ".join(parts)
+
+    if len(rows) < 2:
+        only = result.rows[0]
+        return f"{label(only)}: {what} of {fmt_value(only[-1])}."
+    hi = max(rows, key=lambda r: r[-1])
+    lo = min(rows, key=lambda r: r[-1])
+    noun = "periods" if grain else "groups"
+    sentence = (
+        f"{what.capitalize()} was highest for {label(hi)} ({fmt_value(hi[-1])}) and lowest for "
+        f"{label(lo)} ({fmt_value(lo[-1])}), across {len(result.rows)} {noun}."
+    )
+    if result.truncated:
+        sentence += " More groups exist beyond the ones shown."
+    return sentence
 
 
 _NUM = re.compile(

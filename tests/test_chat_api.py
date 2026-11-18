@@ -119,7 +119,7 @@ def test_summary_with_invented_number_is_replaced(
     assert "9,999,999" not in reply["content"]
     assert reply["answer"]["summary_source"] == "template"
     top = reply["answer"]["table"]["rows"][0]
-    assert reply["content"].startswith(f"{top[0]} comes first with")
+    assert reply["content"].startswith(f"Total revenue was highest for {top[0]} (")
 
 
 def test_dates_are_resolved_in_code(

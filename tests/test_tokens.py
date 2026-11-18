@@ -64,7 +64,7 @@ def test_alg_none_rejected(client: TestClient) -> None:
         "iat": now,
         "exp": now + timedelta(hours=1),
     }
-    token = jwt.encode(payload, key=None, algorithm="none")
+    token = jwt.encode(payload, key="", algorithm="none")
     assert _me(client, token) == 401
 
 

@@ -226,6 +226,10 @@ def validate_plan(plan: QueryPlan, columns: list[ColumnInfo], today: date) -> Va
 
     dims = ([plan.time_grain] if plan.time_grain else []) + group_by
     sort = plan.sort
+    # Models often name the measured column ("revenue", "sum_revenue") meaning "the value".
+    value_names = {"value", plan.metric, f"{plan.metric}_{metric_column}", metric_column or ""}
+    if sort and sort.by not in dims and sort.by.lower() in {v.lower() for v in value_names if v}:
+        sort = sort.model_copy(update={"by": "value"})
     if sort and sort.by != "value" and sort.by not in dims:
         match = next((d for d in dims if d.lower() == sort.by.lower()), None)
         if match is None:

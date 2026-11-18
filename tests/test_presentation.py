@@ -123,3 +123,19 @@ def test_summary_prompt_gets_code_computed_extremes() -> None:
     ]
     assert "Key facts (computed)" in table_text(trend)
     assert key_facts(result([[42.0]], [])) == []  # single number: nothing to compare
+
+
+def test_fallback_summary_reads_naturally() -> None:
+    from app.query.presentation import fallback_summary
+
+    trend = result(
+        [["2025-01-01", 187693.45], ["2025-02-01", 146421.75], ["2025-03-01", 126410.7]],
+        ["month"],
+    )
+    text = fallback_summary(vp(metric="sum", metric_column="revenue", time_grain="month"), trend)
+    assert text == (
+        "Total revenue was highest for Jan 2025 (187,693.45) and lowest for Mar 2025 "
+        "(126,410.7), across 3 periods."
+    )
+    count = result([[298]], [], "count")
+    assert fallback_summary(vp(metric="count"), count) == "There are 298 matching rows."

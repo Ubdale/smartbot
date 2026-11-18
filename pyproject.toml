@@ -23,6 +23,7 @@ dependencies = [
     "httpx>=0.28",
     "cachetools>=5.5",
     "rapidfuzz>=3.10",
+    "boto3>=1.35",
 ]
 
 [dependency-groups]
@@ -32,6 +33,8 @@ dev = [
     "mypy>=1.13",
     "pandas-stubs>=2.2",
     "types-cachetools>=5.5",
+    "moto[s3]>=5.0",
+    "boto3-stubs[s3]>=1.35",
 ]
 
 [tool.uv]

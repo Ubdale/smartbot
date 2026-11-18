@@ -1,0 +1,37 @@
+# Render Blueprint: the AskData API on Render's free plan.
+# New + > Blueprint > pick this repo. Values marked `sync: false` are asked for in the
+# dashboard (secrets never live in the repo). See README "Deploy" for every value.
+services:
+  - type: web
+    name: askdata-api
+    runtime: docker
+    plan: free
+    region: ohio # us-east-2, next to the Neon database and storage
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: prod
+      - key: SECRET_KEY
+        generateValue: true # random value, stable across deploys
+      - key: DATABASE_URL # Neon direct connection string (not the -pooler one)
+        sync: false
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      # Render's free disk is wiped on every restart/deploy, so uploaded files are kept
+      # in S3-compatible object storage (Neon). The disk only caches them.
+      - key: STORAGE_BACKEND
+        value: s3
+      - key: S3_ENDPOINT_URL # Neon: AWS_ENDPOINT_URL_S3
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: us-east-2

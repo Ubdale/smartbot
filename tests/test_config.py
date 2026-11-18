@@ -48,3 +48,17 @@ def test_invalid_provider_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     with pytest.raises(ValueError, match="llm_provider"):
         Settings(_env_file=None)
+
+
+def test_every_setting_is_documented_in_env_example() -> None:
+    from pathlib import Path
+
+    example = Path(__file__).resolve().parent.parent / ".env.example"
+    documented = {
+        line.split("=", 1)[0].strip()
+        for line in example.read_text().splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    }
+    internal = {"APP_NAME"}  # not meant to be configured
+    missing = {name.upper() for name in Settings.model_fields} - documented - internal
+    assert not missing, f"add to .env.example: {sorted(missing)}"

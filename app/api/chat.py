@@ -7,9 +7,10 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
+from app.api.datasets import require_parquet
 from app.api.deps import AppSettings, CurrentUser, DbSession, Today, not_found, workspace_scoped
 from app.llm.base import LLMProvider, LLMUnavailableError
-from app.llm.factory import get_llm
+from app.llm.factory import get_llm, get_summary_llm
 from app.models import Conversation, Dataset, Message, UsageEvent, User
 from app.query.answer import Answer, answer_question
 from app.query.planner import history_messages
@@ -20,7 +21,6 @@ from app.schemas.chat import (
     ConversationSummary,
     MessageOut,
 )
-from app.storage import DatasetStorage
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -81,6 +81,7 @@ def ask(
     db: DbSession,
     settings: AppSettings,
     llm: Annotated[LLMProvider, Depends(get_llm)],
+    summarizer: Annotated[LLMProvider, Depends(get_summary_llm)],
     today: Today,
 ) -> AskResponse:
     if body.conversation_id:
@@ -99,9 +100,7 @@ def ask(
             status.HTTP_422_UNPROCESSABLE_CONTENT, "Send dataset_id or conversation_id."
         )
 
-    parquet = DatasetStorage(settings.data_dir).parquet_path(ds.workspace_id, ds.id)
-    if not parquet.exists():
-        raise HTTPException(status.HTTP_410_GONE, "The dataset's data file is missing.")
+    parquet = require_parquet(settings, ds)
 
     # Recent answered turns let follow-ups ("now split by city") modify the previous plan.
     turns: list[tuple[str, dict[str, Any]]] = []
@@ -124,6 +123,7 @@ def ask(
             parquet=parquet,
             history=history,
             today=today,
+            summarizer=summarizer,
         )
     except LLMUnavailableError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
