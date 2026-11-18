@@ -6,7 +6,7 @@ Chat with your business data. Upload a CSV or Excel file (or connect a database)
 
 Everything runs on free tools: SQLite, a local Ollama model, and the free tiers of Gemini or Groq.
 
-> Status: **Milestone 2 (auth + workspaces)**. Sign-up, login (JWT) and per-company workspace isolation are in place, on top of the Milestone 1 skeleton.
+> Status: **Milestone 3 (datasets)**. Upload CSV/XLSX files, get each column's type and a summary, and preview the rows. Builds on auth with workspace isolation (M2) and the skeleton (M1).
 
 ## Quick start (local)
 
@@ -32,10 +32,34 @@ Open http://localhost:8000/health or http://localhost:8000/docs.
 | `GET` | `/workspaces/me` | Bearer | Your workspace |
 | `GET` | `/workspaces/me/members` | Bearer | Users in your workspace |
 | `GET` | `/workspaces/{id}` | Bearer | 404 unless it's your workspace |
+| `POST` | `/datasets` | Bearer | Upload a `.csv`/`.xlsx` (multipart `file`, optional `name`, `sheet`); max 20 MB |
+| `GET` | `/datasets` | Bearer | Your workspace's datasets |
+| `GET` | `/datasets/{id}` | Bearer | One dataset, with each column's type, kind, samples, null count and min/max |
+| `GET` | `/datasets/{id}/preview?limit=50` | Bearer | First rows (up to 200) |
+| `DELETE` | `/datasets/{id}` | Bearer | Delete the dataset and its files |
 
 In `/docs`, click **Authorize** and sign in with your email and password to try the protected routes.
 
 **Workspace isolation:** every query for company data goes through `workspace_scoped()` in [app/api/deps.py](app/api/deps.py). Anything outside your workspace returns 404, so you can't even tell whether it exists. [tests/test_isolation.py](tests/test_isolation.py) proves this.
+
+## Datasets
+
+Every upload is converted once to **Parquet**, and every query reads that file with DuckDB. Files are stored per workspace in `data/workspaces/{workspace_id}/datasets/{dataset_id}/`, as `original.csv`/`.xlsx` plus `data.parquet`.
+
+- **CSV:** column types are detected by scanning the whole file. Files saved by Excel on Windows (cp1252) and files starting with a UTF-8 BOM are handled.
+- **Excel (`.xlsx`):** the first sheet is used unless you pass `sheet`. Blank rows and blank unnamed columns are dropped, and a column mixing numbers and text is kept as text.
+- **Column names:** trimmed; blanks become `column_N`; duplicates get `_2`, `_3`.
+- **Limits:** 20 MB (`MAX_UPLOAD_MB`), 500 columns, 2 million rows. Oversized uploads are refused with 413 before the body is read.
+
+Only the column summary (types, 3 sample values, min/max) is ever sent to the LLM, never the rows.
+
+### Sample data
+
+`sample_data/` holds synthetic demo data: `hr_employees.csv` (400 employees) and `sales_orders.csv` (3,000 orders, 2024-01 to 2026-09). It's generated deterministically, so the files are identical every time:
+
+```bash
+uv run python scripts/generate_sample_data.py
+```
 
 ## With Docker
 

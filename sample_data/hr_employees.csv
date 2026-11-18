@@ -1,0 +1,401 @@
+employee_id,full_name,department,city,job_level,hire_date,termination_date,annual_salary,is_remote
+E0001,Hiro Haddad,Operations,Manchester,Senior,2018-04-13,,66400.0,False
+E0002,Gwen Haddad,Engineering,Dubai,Mid,2022-09-25,2023-06-03,107100.0,False
+E0003,Sami Ito,Customer Support,London,Senior,2022-09-15,,36500.0,False
+E0004,Kofi Diaz,Engineering,London,Mid,2020-05-31,,91900.0,False
+E0005,Rosa Diaz,Engineering,Lisbon,Junior,2018-06-27,,87000.0,False
+E0006,Wei Chen,Marketing,London,Mid,2022-01-21,,83700.0,False
+E0007,Omar Lopez,Marketing,Manchester,Mid,2019-02-18,,55500.0,True
+E0008,Farah Silva,Finance,Karachi,Junior,2025-04-08,2026-04-28,80000.0,True
+E0009,Vera Khan,Marketing,London,Junior,2025-09-19,,46600.0,False
+E0010,Sami Khan,Engineering,Manchester,Mid,2020-05-14,,94700.0,False
+E0011,Xena Tanaka,Sales,Lisbon,Senior,2020-12-20,2024-01-30,71000.0,True
+E0012,Yusuf Brown,Finance,London,Junior,2023-09-19,,60400.0,False
+E0013,Omar Rossi,Operations,Berlin,Lead,2022-04-26,,74200.0,True
+E0014,Yusuf Ito,Customer Support,Karachi,Junior,2025-08-24,,40200.0,True
+E0015,Imran Rossi,Engineering,Manchester,Mid,2026-02-05,,73000.0,False
+E0016,Elif Lopez,Marketing,Manchester,Mid,2023-09-11,,83900.0,False
+E0017,Dana Lopez,Engineering,Berlin,Junior,2021-08-20,,83100.0,False
+E0018,Carlos Silva,Engineering,Manchester,Junior,2026-03-17,,100600.0,False
+E0019,Gwen Silva,Engineering,Karachi,Mid,2024-10-20,,118500.0,False
+E0020,Quinn Okafor,Operations,London,Junior,2022-03-10,,40700.0,True
+E0021,Carlos Brown,Operations,Manchester,Junior,2024-08-07,,39300.0,False
+E0022,Gwen Silva,Sales,Manchester,Senior,2021-02-14,,102400.0,False
+E0023,Gwen Diaz,Engineering,London,Mid,2023-04-22,,91600.0,False
+E0024,Usman Diaz,Marketing,London,Mid,2018-08-10,,62000.0,False
+E0025,Elif Novak,Engineering,Manchester,Junior,2020-02-19,,83700.0,False
+E0026,Rosa Ahmed,Sales,London,Lead,2024-03-04,2026-03-01,100200.0,True
+E0027,Ben Fischer,Sales,Lisbon,Junior,2020-05-25,,70400.0,False
+E0028,Xena Silva,Customer Support,Karachi,Senior,2021-03-14,,36300.0,True
+E0029,Ben Khan,Finance,London,Junior,2024-06-30,,81000.0,False
+E0030,Carlos Fischer,Operations,London,Mid,2018-08-21,,66400.0,True
+E0031,Tara Brown,Engineering,Dubai,Junior,2024-05-22,,114300.0,False
+E0032,Wei Khan,Sales,Manchester,Junior,2020-12-04,,53500.0,False
+E0033,Aisha Okafor,Sales,Dubai,Lead,2026-06-07,,109700.0,True
+E0034,Carlos Haddad,Engineering,Berlin,Junior,2020-12-22,2025-01-19,97900.0,False
+E0035,Vera Silva,Sales,Berlin,Lead,2025-05-02,,51700.0,False
+E0036,Elif Ito,Engineering,Berlin,Mid,2019-03-15,,118800.0,True
+E0037,Imran Brown,Operations,London,Mid,2020-12-17,,72800.0,True
+E0038,Imran Fischer,Sales,Karachi,Mid,2019-06-20,,90900.0,False
+E0039,Rosa Brown,Engineering,Berlin,Mid,2025-10-01,,76100.0,True
+E0040,Gwen Haddad,Sales,Karachi,Junior,2018-06-13,,95700.0,False
+E0041,Hiro Fischer,Sales,Manchester,Senior,2024-12-17,,46600.0,False
+E0042,Xena Haddad,Sales,Berlin,Junior,2022-08-14,,90600.0,False
+E0043,Omar Lopez,Engineering,Berlin,Senior,2023-04-12,,130300.0,True
+E0044,Carlos Ito,Operations,Berlin,Mid,2022-06-21,,54800.0,False
+E0045,Farah Tanaka,Operations,Berlin,Junior,2018-04-24,2021-05-27,63100.0,False
+E0046,Quinn Diaz,Customer Support,Lisbon,Senior,2022-11-23,,37300.0,True
+E0047,Rosa Garcia,Sales,Berlin,Mid,2023-10-31,,106700.0,False
+E0048,Xena Jensen,Operations,Dubai,Junior,2025-06-10,,55200.0,False
+E0049,Vera Malik,Engineering,Karachi,Senior,2019-06-06,,78100.0,False
+E0050,Gwen Novak,Sales,Dubai,Mid,2018-01-02,,65900.0,False
+E0051,Zara Fischer,Operations,Karachi,Junior,2023-09-25,,59600.0,False
+E0052,Jade Haddad,Sales,Manchester,Junior,2026-06-04,,48000.0,False
+E0053,Usman Tanaka,Operations,Manchester,Senior,2026-08-14,2026-09-30,54100.0,False
+E0054,Yusuf Novak,Engineering,Manchester,Junior,2025-09-17,2026-01-09,136800.0,False
+E0055,Dana Okafor,Engineering,Manchester,Senior,2020-10-17,,115100.0,False
+E0056,Tara Rossi,Operations,Lisbon,Senior,2026-06-21,,61000.0,False
+E0057,Yusuf Haddad,Customer Support,Karachi,Junior,2023-04-29,,53800.0,False
+E0058,Hiro Ito,Engineering,Berlin,Junior,2022-12-07,2024-09-12,105500.0,True
+E0059,Carlos Novak,Engineering,Lisbon,Junior,2025-10-13,2026-03-31,99900.0,True
+E0060,Sami Ahmed,Customer Support,Dubai,Mid,2022-05-15,,32200.0,False
+E0061,Xena Silva,Customer Support,Dubai,Senior,2022-09-13,,45700.0,True
+E0062,Vera Malik,Sales,Karachi,Junior,2022-05-12,,75400.0,True
+E0063,Sami Tanaka,Operations,Karachi,Junior,2018-04-21,,65000.0,True
+E0064,Kofi Garcia,Sales,Lisbon,Junior,2018-07-25,,94500.0,False
+E0065,Carlos Patel,Customer Support,London,Senior,2022-09-23,,33500.0,False
+E0066,Usman Brown,Engineering,London,Lead,2018-10-09,,80000.0,True
+E0067,Dana Tanaka,Engineering,Manchester,Mid,2019-06-02,,84200.0,False
+E0068,Yusuf Fischer,Operations,Berlin,Junior,2026-05-22,,39100.0,False
+E0069,Wei Garcia,Operations,London,Mid,2022-03-18,,72900.0,True
+E0070,Tara Diaz,Operations,Dubai,Senior,2021-05-20,,52600.0,False
+E0071,Aisha Novak,Sales,Lisbon,Junior,2023-09-04,,107500.0,False
+E0072,Xena Rossi,Customer Support,Karachi,Junior,2025-12-07,2026-03-22,54600.0,False
+E0073,Sami Ito,Sales,Berlin,Senior,2022-11-20,,99000.0,True
+E0074,Sami Weber,Marketing,Karachi,Mid,2020-09-25,,46400.0,False
+E0075,Imran Khan,Engineering,Berlin,Senior,2020-05-18,,117600.0,True
+E0076,Priya Silva,Engineering,Manchester,Mid,2020-02-22,2024-11-11,113400.0,False
+E0077,Mateo Haddad,Customer Support,Berlin,Mid,2019-01-17,,42300.0,False
+E0078,Lena Okafor,Sales,Berlin,Junior,2026-05-14,,60000.0,False
+E0079,Yusuf Fischer,Sales,Manchester,Junior,2026-05-01,,76500.0,False
+E0080,Dana Garcia,Finance,Berlin,Junior,2023-11-19,,61700.0,True
+E0081,Rosa Jensen,Operations,Karachi,Lead,2021-01-28,2021-07-18,64800.0,False
+E0082,Priya Patel,Engineering,Lisbon,Junior,2018-02-20,,137400.0,True
+E0083,Mateo Patel,Marketing,London,Mid,2019-04-13,,79300.0,True
+E0084,Dana Silva,Customer Support,Lisbon,Mid,2021-05-29,2022-12-18,54100.0,True
+E0085,Jade Tanaka,Operations,Lisbon,Junior,2023-01-20,,64100.0,False
+E0086,Gwen Ito,Customer Support,Karachi,Junior,2026-07-22,,38700.0,False
+E0087,Tara Patel,Engineering,Berlin,Junior,2022-08-01,,86600.0,True
+E0088,Imran Tanaka,Marketing,Karachi,Senior,2018-10-19,,54900.0,True
+E0089,Elif Chen,Engineering,London,Junior,2019-09-03,,88100.0,False
+E0090,Omar Jensen,Operations,Karachi,Mid,2021-03-28,,49400.0,False
+E0091,Xena Khan,Sales,Dubai,Junior,2024-09-15,2026-01-30,50900.0,False
+E0092,Aisha Ito,Customer Support,Dubai,Junior,2024-06-14,,53200.0,False
+E0093,Sami Novak,Operations,Karachi,Senior,2021-02-13,,78700.0,False
+E0094,Farah Khan,Sales,Lisbon,Mid,2021-08-08,,63700.0,False
+E0095,Kofi Ito,Customer Support,Berlin,Junior,2024-03-03,2024-07-31,53600.0,False
+E0096,Rosa Okafor,Customer Support,Lisbon,Junior,2018-01-05,,46500.0,False
+E0097,Gwen Ito,Sales,Dubai,Junior,2022-12-16,,63700.0,False
+E0098,Tara Haddad,Sales,Karachi,Junior,2018-04-29,,80800.0,False
+E0099,Dana Evans,Engineering,Lisbon,Lead,2019-04-10,,86900.0,False
+E0100,Hiro Okafor,Sales,Dubai,Junior,2023-05-31,,57400.0,False
+E0101,Imran Novak,Customer Support,Berlin,Lead,2019-07-14,,46200.0,False
+E0102,Sami Patel,Engineering,Manchester,Mid,2021-05-07,,101300.0,False
+E0103,Kofi Garcia,Customer Support,Karachi,Junior,2022-03-26,,42700.0,False
+E0104,Wei Malik,Sales,Lisbon,Lead,2021-07-27,,96500.0,False
+E0105,Kofi Diaz,Engineering,Lisbon,Junior,2018-06-01,2025-03-13,133300.0,True
+E0106,Carlos Patel,Engineering,Berlin,Junior,2025-05-05,,117000.0,False
+E0107,Mateo Khan,Marketing,Karachi,Senior,2025-07-25,,83000.0,False
+E0108,Vera Jensen,Engineering,Manchester,Senior,2018-10-08,,97500.0,True
+E0109,Wei Jensen,Operations,London,Junior,2019-02-16,,71400.0,True
+E0110,Nadia Tanaka,Sales,Karachi,Senior,2019-08-20,,56000.0,True
+E0111,Priya Tanaka,Marketing,Manchester,Junior,2024-12-13,,76900.0,False
+E0112,Vera Silva,Operations,Manchester,Junior,2023-03-21,,77700.0,False
+E0113,Omar Jensen,Engineering,Manchester,Lead,2022-10-04,,129000.0,True
+E0114,Wei Jensen,Sales,London,Lead,2022-01-10,,87800.0,True
+E0115,Ben Weber,Operations,Karachi,Mid,2025-09-10,,76000.0,True
+E0116,Hiro Garcia,Customer Support,Dubai,Junior,2024-10-22,,53200.0,False
+E0117,Usman Brown,Operations,Berlin,Senior,2019-07-15,,39400.0,False
+E0118,Nadia Fischer,Engineering,Manchester,Junior,2021-04-23,,105500.0,False
+E0119,Imran Patel,Operations,Berlin,Senior,2021-01-21,,52200.0,True
+E0120,Hiro Malik,Finance,Dubai,Mid,2019-07-31,,101400.0,True
+E0121,Xena Ito,Operations,Dubai,Mid,2023-02-06,,64800.0,False
+E0122,Kofi Weber,Operations,Manchester,Mid,2023-04-16,2026-08-07,64700.0,False
+E0123,Elif Brown,Customer Support,London,Junior,2025-04-13,,45800.0,True
+E0124,Lena Silva,Marketing,Lisbon,Mid,2019-07-10,,81300.0,False
+E0125,Imran Brown,Operations,Karachi,Mid,2023-06-28,,56600.0,False
+E0126,Lena Silva,Marketing,Karachi,Mid,2019-02-11,,64900.0,True
+E0127,Usman Weber,Engineering,London,Junior,2023-02-06,2024-06-14,90000.0,False
+E0128,Gwen Tanaka,Customer Support,Manchester,Senior,2020-04-20,2026-09-06,38500.0,False
+E0129,Elif Silva,Customer Support,Berlin,Senior,2024-09-07,2025-04-03,35100.0,False
+E0130,Hiro Tanaka,Engineering,Berlin,Junior,2022-01-07,,84900.0,True
+E0131,Priya Okafor,Sales,Berlin,Mid,2019-04-11,,52100.0,False
+E0132,Vera Rossi,Finance,Berlin,Mid,2018-06-27,,112700.0,True
+E0133,Dana Patel,Sales,Karachi,Senior,2022-07-04,,49800.0,True
+E0134,Usman Tanaka,Operations,Dubai,Senior,2018-09-27,2025-11-26,54000.0,False
+E0135,Dana Diaz,Engineering,Karachi,Mid,2023-09-02,,122700.0,False
+E0136,Nadia Khan,Engineering,Lisbon,Mid,2023-01-24,,119700.0,False
+E0137,Elif Patel,Sales,London,Junior,2020-11-10,,50500.0,False
+E0138,Rosa Brown,Customer Support,Dubai,Lead,2022-03-07,,47700.0,False
+E0139,Nadia Brown,Sales,Berlin,Mid,2025-06-18,,67900.0,False
+E0140,Dana Lopez,Engineering,Dubai,Mid,2025-05-13,,122200.0,False
+E0141,Tara Weber,Customer Support,Karachi,Mid,2024-04-16,,32700.0,False
+E0142,Wei Jensen,Customer Support,Berlin,Mid,2020-12-31,2022-09-11,37100.0,True
+E0143,Aisha Chen,Operations,Karachi,Mid,2018-10-13,2026-01-17,53800.0,False
+E0144,Yusuf Tanaka,Engineering,Dubai,Junior,2021-06-30,,68900.0,True
+E0145,Vera Novak,Operations,Lisbon,Mid,2025-07-23,2026-05-05,55400.0,True
+E0146,Jade Tanaka,Sales,Lisbon,Mid,2021-11-14,,65000.0,True
+E0147,Gwen Evans,Finance,Berlin,Junior,2018-08-13,2022-02-27,57800.0,False
+E0148,Wei Haddad,Sales,Dubai,Mid,2019-06-14,,88400.0,False
+E0149,Omar Chen,Sales,Berlin,Mid,2026-04-28,2026-06-29,82300.0,False
+E0150,Kofi Fischer,Sales,Dubai,Mid,2019-04-17,,89800.0,False
+E0151,Sami Malik,Sales,Dubai,Junior,2019-03-10,,101600.0,False
+E0152,Quinn Rossi,Engineering,Manchester,Senior,2026-09-27,2026-09-30,91200.0,False
+E0153,Elif Ito,Customer Support,Manchester,Junior,2019-08-28,,36300.0,False
+E0154,Omar Tanaka,Engineering,Dubai,Mid,2026-09-01,,134300.0,False
+E0155,Usman Khan,Operations,Manchester,Mid,2025-01-02,,57700.0,False
+E0156,Carlos Jensen,Customer Support,Lisbon,Mid,2024-08-19,2026-03-21,33600.0,False
+E0157,Quinn Malik,Engineering,Lisbon,Mid,2019-01-05,,136600.0,False
+E0158,Kofi Weber,Engineering,Lisbon,Mid,2024-05-30,,136800.0,False
+E0159,Carlos Rossi,Customer Support,Karachi,Junior,2021-11-07,,38900.0,False
+E0160,Lena Lopez,Sales,Berlin,Mid,2023-11-12,,95300.0,False
+E0161,Carlos Khan,Engineering,London,Mid,2025-01-28,,94000.0,True
+E0162,Kofi Chen,Marketing,Dubai,Mid,2024-10-04,,90800.0,False
+E0163,Tara Chen,Operations,Berlin,Mid,2025-06-05,,65000.0,False
+E0164,Xena Rossi,Engineering,London,Mid,2025-11-18,,96800.0,False
+E0165,Kofi Patel,Sales,Manchester,Junior,2020-01-09,,53900.0,True
+E0166,Rosa Rossi,Marketing,London,Mid,2019-02-19,,88800.0,False
+E0167,Xena Okafor,Operations,London,Mid,2019-09-24,2021-10-01,66400.0,True
+E0168,Zara Okafor,Sales,Manchester,Mid,2021-03-13,,65100.0,False
+E0169,Sami Okafor,Sales,Lisbon,Senior,2020-03-05,,95600.0,False
+E0170,Zara Weber,Sales,Manchester,Senior,2019-10-26,,48400.0,False
+E0171,Quinn Diaz,Sales,Berlin,Junior,2019-02-25,,55400.0,False
+E0172,Omar Lopez,Sales,London,Mid,2022-11-27,2024-04-24,70800.0,False
+E0173,Aisha Khan,Sales,London,Senior,2018-12-01,,87200.0,False
+E0174,Priya Evans,Engineering,Karachi,Mid,2021-03-21,,111200.0,False
+E0175,Rosa Weber,Engineering,Dubai,Mid,2020-06-02,,123200.0,True
+E0176,Zara Weber,Engineering,Lisbon,Junior,2020-09-03,,127800.0,False
+E0177,Hiro Evans,Operations,Berlin,Mid,2025-02-01,,63800.0,True
+E0178,Quinn Lopez,Sales,London,Lead,2025-06-14,,80400.0,False
+E0179,Priya Brown,Sales,Karachi,Mid,2018-03-25,,69300.0,False
+E0180,Xena Diaz,Sales,Dubai,Senior,2018-10-04,,66600.0,True
+E0181,Vera Okafor,Operations,Karachi,Mid,2025-03-17,2026-06-18,45700.0,True
+E0182,Ben Garcia,Customer Support,London,Junior,2023-02-18,2024-06-04,40700.0,False
+E0183,Yusuf Garcia,Customer Support,Berlin,Mid,2023-04-24,,53900.0,False
+E0184,Nadia Malik,Sales,Karachi,Mid,2019-05-25,,107200.0,False
+E0185,Zara Rossi,Engineering,Berlin,Senior,2025-10-05,,119500.0,True
+E0186,Kofi Diaz,Operations,London,Junior,2020-01-10,,50400.0,False
+E0187,Lena Okafor,Customer Support,London,Senior,2019-11-14,,57500.0,False
+E0188,Ben Chen,Sales,Karachi,Mid,2025-03-04,,68600.0,False
+E0189,Vera Okafor,Operations,London,Junior,2018-05-08,2025-04-29,47900.0,False
+E0190,Vera Okafor,Sales,Berlin,Mid,2024-05-12,2024-12-15,94600.0,False
+E0191,Imran Haddad,Operations,London,Junior,2022-06-19,,45800.0,False
+E0192,Imran Okafor,Marketing,Manchester,Lead,2019-04-28,,59300.0,False
+E0193,Omar Fischer,Sales,Karachi,Mid,2019-05-18,2020-05-15,50700.0,False
+E0194,Wei Chen,Marketing,Dubai,Mid,2021-08-02,,89600.0,False
+E0195,Zara Lopez,Customer Support,Dubai,Junior,2025-11-08,,59600.0,False
+E0196,Omar Silva,Engineering,Manchester,Mid,2023-07-17,2025-10-09,71500.0,False
+E0197,Nadia Novak,Finance,Dubai,Junior,2026-01-23,,113200.0,False
+E0198,Elif Silva,Sales,Karachi,Mid,2025-08-17,,94900.0,True
+E0199,Quinn Evans,Sales,Berlin,Junior,2018-08-15,,66000.0,False
+E0200,Carlos Ito,Sales,Manchester,Mid,2023-10-27,,80800.0,True
+E0201,Farah Tanaka,Sales,Dubai,Junior,2023-12-26,2025-12-11,87800.0,False
+E0202,Carlos Brown,Operations,Karachi,Senior,2024-04-27,2024-07-25,49100.0,True
+E0203,Priya Silva,Operations,Berlin,Mid,2024-12-06,,50700.0,True
+E0204,Carlos Brown,Customer Support,Manchester,Mid,2022-07-22,,45600.0,True
+E0205,Kofi Lopez,Operations,Lisbon,Junior,2021-07-04,,53600.0,False
+E0206,Hiro Evans,Sales,London,Junior,2023-03-26,2025-11-30,106500.0,False
+E0207,Sami Khan,Sales,Manchester,Senior,2019-10-17,,77400.0,False
+E0208,Carlos Malik,Sales,Dubai,Mid,2021-06-17,,60600.0,False
+E0209,Usman Patel,Engineering,Berlin,Mid,2021-02-26,,128500.0,False
+E0210,Mateo Lopez,Marketing,London,Mid,2026-02-27,,73500.0,True
+E0211,Omar Silva,Operations,Berlin,Senior,2018-10-29,,64200.0,False
+E0212,Zara Khan,Engineering,Dubai,Lead,2019-02-01,,121600.0,True
+E0213,Elif Khan,Sales,Lisbon,Mid,2023-08-11,2023-12-28,54700.0,False
+E0214,Mateo Weber,Engineering,Karachi,Senior,2024-11-16,,109500.0,False
+E0215,Jade Patel,Sales,London,Mid,2023-06-30,,88800.0,False
+E0216,Usman Ahmed,Operations,Dubai,Mid,2026-02-18,,78600.0,False
+E0217,Ben Tanaka,Customer Support,Lisbon,Junior,2024-06-23,,49600.0,False
+E0218,Hiro Brown,Marketing,Dubai,Lead,2019-08-29,,50500.0,True
+E0219,Gwen Novak,Sales,Dubai,Senior,2019-09-13,,104800.0,False
+E0220,Quinn Garcia,Customer Support,Dubai,Junior,2018-09-13,,50500.0,False
+E0221,Rosa Khan,Sales,Dubai,Mid,2019-12-11,,95200.0,False
+E0222,Priya Garcia,Operations,Manchester,Junior,2025-10-10,,50500.0,False
+E0223,Gwen Patel,Finance,Berlin,Mid,2026-08-25,,86400.0,False
+E0224,Rosa Malik,Customer Support,Lisbon,Senior,2021-03-24,2025-03-08,58700.0,False
+E0225,Carlos Lopez,Engineering,Lisbon,Mid,2021-03-24,,121100.0,True
+E0226,Wei Ito,Customer Support,Manchester,Junior,2021-01-15,,52700.0,True
+E0227,Hiro Brown,Engineering,London,Mid,2023-12-16,,118800.0,True
+E0228,Farah Novak,Customer Support,Karachi,Lead,2018-01-22,,56600.0,False
+E0229,Usman Brown,Engineering,London,Mid,2021-03-22,,82400.0,False
+E0230,Farah Novak,Marketing,Manchester,Lead,2018-06-02,,46800.0,False
+E0231,Jade Brown,Customer Support,London,Junior,2020-02-03,,48900.0,False
+E0232,Rosa Rossi,Sales,Lisbon,Senior,2023-02-05,,53700.0,False
+E0233,Xena Okafor,Engineering,Karachi,Junior,2019-04-07,,79000.0,False
+E0234,Gwen Fischer,Customer Support,Dubai,Senior,2024-05-14,,57100.0,False
+E0235,Dana Fischer,Sales,Manchester,Mid,2018-12-22,,105800.0,True
+E0236,Kofi Jensen,Sales,Dubai,Senior,2023-01-04,,45700.0,False
+E0237,Omar Jensen,Operations,Manchester,Mid,2018-09-12,,59100.0,False
+E0238,Usman Jensen,Customer Support,Berlin,Mid,2021-06-27,,38100.0,True
+E0239,Lena Novak,Engineering,Karachi,Mid,2026-05-21,,100300.0,False
+E0240,Vera Weber,Operations,London,Mid,2020-06-13,,60200.0,False
+E0241,Quinn Garcia,Marketing,Dubai,Mid,2019-04-05,2025-07-25,53200.0,False
+E0242,Sami Patel,Sales,London,Senior,2025-08-18,,74000.0,True
+E0243,Ben Silva,Engineering,Lisbon,Mid,2022-08-29,,88100.0,True
+E0244,Sami Chen,Engineering,London,Mid,2018-01-13,,117500.0,False
+E0245,Priya Brown,Engineering,Berlin,Mid,2018-10-10,,122700.0,False
+E0246,Lena Malik,Finance,Lisbon,Senior,2025-03-30,,108900.0,False
+E0247,Elif Lopez,Operations,London,Junior,2025-06-03,,60600.0,False
+E0248,Yusuf Ahmed,Customer Support,Berlin,Mid,2020-07-01,,52100.0,False
+E0249,Lena Evans,Sales,Berlin,Junior,2020-07-29,,101900.0,False
+E0250,Yusuf Ahmed,Engineering,Manchester,Junior,2025-05-28,,72600.0,True
+E0251,Hiro Brown,Operations,Lisbon,Mid,2025-11-20,,60700.0,False
+E0252,Jade Haddad,Customer Support,Karachi,Mid,2019-07-28,,48200.0,False
+E0253,Elif Rossi,Customer Support,Manchester,Mid,2020-08-28,,39700.0,False
+E0254,Usman Novak,Operations,Dubai,Mid,2026-03-31,,78800.0,False
+E0255,Nadia Novak,Operations,Manchester,Junior,2023-11-19,,45700.0,False
+E0256,Wei Evans,Engineering,Lisbon,Senior,2020-07-12,,107200.0,False
+E0257,Imran Garcia,Operations,Berlin,Mid,2019-07-04,,76700.0,False
+E0258,Ben Ito,Engineering,Lisbon,Mid,2026-02-15,,110200.0,False
+E0259,Vera Silva,Engineering,Manchester,Mid,2026-07-17,,130200.0,False
+E0260,Gwen Diaz,Finance,Karachi,Lead,2018-03-04,,81100.0,True
+E0261,Hiro Silva,Operations,Berlin,Senior,2020-04-17,,54000.0,False
+E0262,Priya Okafor,Sales,London,Senior,2020-12-07,,92000.0,False
+E0263,Nadia Brown,Sales,Dubai,Senior,2020-04-12,,93200.0,True
+E0264,Nadia Jensen,Operations,Manchester,Junior,2024-07-20,,47700.0,False
+E0265,Vera Khan,Engineering,Berlin,Senior,2024-03-05,,101600.0,False
+E0266,Farah Evans,Customer Support,Karachi,Mid,2023-03-03,2025-04-22,37200.0,False
+E0267,Carlos Brown,Finance,London,Mid,2018-08-29,,104800.0,True
+E0268,Omar Lopez,Customer Support,London,Mid,2018-02-07,,50700.0,False
+E0269,Rosa Novak,Sales,London,Junior,2023-06-22,2026-08-14,91900.0,False
+E0270,Vera Novak,Engineering,Manchester,Junior,2023-08-20,,72200.0,True
+E0271,Lena Ito,Engineering,Lisbon,Junior,2023-11-27,,136900.0,False
+E0272,Vera Chen,Engineering,Karachi,Lead,2025-10-26,,113700.0,True
+E0273,Ben Ahmed,Sales,Karachi,Junior,2022-03-25,,77500.0,False
+E0274,Dana Rossi,Customer Support,London,Junior,2024-05-06,,57200.0,False
+E0275,Vera Ito,Operations,Dubai,Mid,2021-01-15,2021-08-15,39400.0,False
+E0276,Yusuf Malik,Sales,London,Junior,2020-04-28,,81700.0,False
+E0277,Kofi Malik,Marketing,Karachi,Junior,2025-08-05,,94400.0,False
+E0278,Hiro Chen,Sales,Berlin,Mid,2021-11-17,2024-06-29,84900.0,False
+E0279,Zara Okafor,Finance,Lisbon,Junior,2021-08-29,2023-05-10,85900.0,False
+E0280,Carlos Weber,Engineering,Berlin,Senior,2024-07-27,,118500.0,True
+E0281,Elif Malik,Engineering,Berlin,Mid,2025-12-25,,71900.0,False
+E0282,Elif Chen,Sales,Manchester,Mid,2026-07-16,,81200.0,False
+E0283,Carlos Weber,Engineering,Dubai,Senior,2019-01-03,,129800.0,True
+E0284,Sami Rossi,Sales,Manchester,Mid,2026-09-27,2026-09-30,56000.0,True
+E0285,Imran Novak,Engineering,Berlin,Mid,2019-08-21,2024-09-03,70800.0,True
+E0286,Tara Garcia,Engineering,Lisbon,Junior,2025-01-04,,87800.0,False
+E0287,Kofi Okafor,Sales,Berlin,Mid,2024-12-15,,98500.0,False
+E0288,Wei Garcia,Operations,Lisbon,Junior,2021-05-15,,78500.0,False
+E0289,Sami Haddad,Engineering,Berlin,Mid,2025-10-17,,126200.0,False
+E0290,Rosa Fischer,Engineering,Karachi,Senior,2024-04-28,,67000.0,False
+E0291,Jade Chen,Finance,Lisbon,Mid,2020-05-08,,59000.0,False
+E0292,Zara Malik,Engineering,London,Mid,2019-09-24,,109800.0,False
+E0293,Ben Lopez,Operations,Karachi,Senior,2025-10-04,,60600.0,False
+E0294,Vera Lopez,Engineering,Manchester,Mid,2026-08-16,,68300.0,False
+E0295,Kofi Novak,Operations,London,Junior,2022-06-25,,48900.0,False
+E0296,Hiro Okafor,Sales,Berlin,Mid,2024-07-05,,95200.0,False
+E0297,Priya Diaz,Sales,Berlin,Mid,2021-11-13,,107500.0,True
+E0298,Kofi Okafor,Finance,Manchester,Mid,2019-08-04,,72600.0,True
+E0299,Jade Brown,Customer Support,Karachi,Junior,2023-01-28,,55800.0,False
+E0300,Xena Haddad,Operations,Dubai,Junior,2019-11-05,,44700.0,False
+E0301,Usman Fischer,Finance,Manchester,Mid,2020-08-07,,78100.0,True
+E0302,Nadia Malik,Operations,London,Senior,2020-03-19,,46600.0,False
+E0303,Zara Silva,Customer Support,Manchester,Mid,2018-09-14,,37500.0,True
+E0304,Usman Khan,Operations,Dubai,Mid,2023-06-28,,54500.0,True
+E0305,Vera Jensen,Sales,Dubai,Mid,2023-02-19,,88700.0,False
+E0306,Wei Evans,Engineering,Dubai,Mid,2019-04-25,,109700.0,False
+E0307,Wei Fischer,Sales,Dubai,Junior,2023-06-17,,63800.0,True
+E0308,Aisha Patel,Marketing,Manchester,Junior,2024-12-12,2026-02-12,64200.0,False
+E0309,Nadia Okafor,Operations,Lisbon,Junior,2022-08-03,,61700.0,False
+E0310,Rosa Jensen,Engineering,Manchester,Senior,2018-05-14,,107400.0,False
+E0311,Imran Silva,Sales,Berlin,Mid,2023-09-24,2024-07-13,94200.0,False
+E0312,Dana Haddad,Sales,Berlin,Senior,2020-06-14,,47100.0,True
+E0313,Dana Haddad,Marketing,Manchester,Senior,2018-12-23,,74400.0,False
+E0314,Tara Evans,Customer Support,Manchester,Senior,2025-02-04,,54600.0,False
+E0315,Kofi Jensen,Operations,Berlin,Mid,2024-09-10,,78000.0,False
+E0316,Ben Ito,Marketing,Karachi,Junior,2019-01-26,2023-11-06,88300.0,True
+E0317,Vera Malik,Customer Support,Lisbon,Junior,2020-10-10,,49700.0,False
+E0318,Yusuf Chen,Sales,Lisbon,Mid,2018-11-06,,63100.0,False
+E0319,Aisha Chen,Sales,Karachi,Lead,2023-06-23,,86300.0,False
+E0320,Nadia Garcia,Marketing,Lisbon,Junior,2023-12-30,,86400.0,False
+E0321,Zara Khan,Operations,Karachi,Senior,2024-05-07,,39900.0,False
+E0322,Omar Okafor,Customer Support,London,Lead,2018-03-08,2020-02-13,44000.0,False
+E0323,Imran Chen,Marketing,Karachi,Mid,2025-04-16,,49100.0,False
+E0324,Jade Haddad,Operations,Lisbon,Mid,2018-08-01,,67600.0,True
+E0325,Quinn Okafor,Sales,London,Junior,2019-06-28,,67300.0,True
+E0326,Hiro Malik,Marketing,London,Senior,2025-10-13,2026-01-17,50100.0,False
+E0327,Yusuf Evans,Marketing,Karachi,Lead,2019-07-16,,52100.0,False
+E0328,Xena Garcia,Engineering,Karachi,Senior,2025-04-16,2025-12-11,134000.0,False
+E0329,Elif Diaz,Sales,Dubai,Senior,2020-06-08,2021-09-22,67800.0,False
+E0330,Carlos Haddad,Customer Support,Dubai,Mid,2020-10-11,,52200.0,True
+E0331,Vera Jensen,Finance,Manchester,Mid,2018-04-20,,83100.0,False
+E0332,Zara Haddad,Engineering,Lisbon,Mid,2018-08-12,,83100.0,False
+E0333,Kofi Evans,Engineering,Lisbon,Senior,2018-02-19,,107600.0,False
+E0334,Yusuf Chen,Operations,London,Mid,2026-07-22,,38600.0,True
+E0335,Usman Rossi,Marketing,Lisbon,Mid,2022-06-19,,65100.0,False
+E0336,Jade Chen,Operations,Dubai,Lead,2019-09-18,,78900.0,True
+E0337,Usman Chen,Sales,Berlin,Mid,2024-07-30,,92400.0,False
+E0338,Dana Okafor,Engineering,Dubai,Mid,2018-12-20,,88200.0,False
+E0339,Wei Ahmed,Customer Support,Manchester,Mid,2019-05-05,2021-01-16,41700.0,False
+E0340,Xena Ito,Customer Support,Karachi,Senior,2020-11-27,2022-06-29,53600.0,True
+E0341,Imran Tanaka,Customer Support,Karachi,Junior,2021-01-19,,44700.0,False
+E0342,Imran Diaz,Sales,Dubai,Mid,2024-05-10,2024-12-17,52500.0,False
+E0343,Priya Lopez,Engineering,Lisbon,Lead,2018-02-20,,78400.0,False
+E0344,Nadia Haddad,Engineering,Berlin,Junior,2026-01-03,,133700.0,False
+E0345,Quinn Brown,Customer Support,Manchester,Junior,2024-05-30,,46400.0,True
+E0346,Yusuf Jensen,Sales,Berlin,Junior,2023-03-21,,74700.0,False
+E0347,Hiro Okafor,Engineering,Berlin,Mid,2021-05-29,,102000.0,False
+E0348,Hiro Evans,Engineering,London,Lead,2024-02-17,,66800.0,False
+E0349,Kofi Ahmed,Operations,Karachi,Mid,2025-10-11,,69000.0,False
+E0350,Ben Evans,Engineering,Karachi,Junior,2020-09-02,,68300.0,True
+E0351,Lena Okafor,Marketing,Karachi,Junior,2022-08-19,,49800.0,True
+E0352,Ben Novak,Customer Support,Karachi,Lead,2018-11-03,,38600.0,True
+E0353,Xena Khan,Sales,Berlin,Mid,2022-05-29,,60200.0,False
+E0354,Elif Diaz,Engineering,Manchester,Mid,2026-08-21,,88600.0,True
+E0355,Jade Okafor,Sales,Berlin,Senior,2026-08-22,,50900.0,False
+E0356,Ben Garcia,Sales,Berlin,Junior,2025-11-26,,91200.0,False
+E0357,Imran Fischer,Sales,London,Lead,2018-07-20,,100500.0,False
+E0358,Zara Evans,Operations,London,Junior,2019-01-23,,72900.0,False
+E0359,Usman Chen,Engineering,Dubai,Mid,2022-06-29,,133800.0,True
+E0360,Omar Evans,Finance,London,Senior,2020-03-20,,103900.0,False
+E0361,Nadia Malik,Engineering,Lisbon,Junior,2023-03-04,2026-07-21,116200.0,True
+E0362,Omar Evans,Engineering,London,Mid,2020-02-06,,111300.0,False
+E0363,Carlos Ito,Sales,Lisbon,Junior,2024-03-05,,58000.0,False
+E0364,Rosa Ahmed,Operations,Lisbon,Senior,2025-01-27,,53100.0,False
+E0365,Mateo Ito,Sales,Manchester,Junior,2024-05-05,,83800.0,True
+E0366,Quinn Lopez,Customer Support,Dubai,Lead,2021-02-24,2023-12-17,59300.0,True
+E0367,Zara Brown,Operations,Manchester,Mid,2020-12-27,,79300.0,False
+E0368,Zara Lopez,Finance,Dubai,Junior,2019-12-13,2023-09-05,95500.0,False
+E0369,Zara Patel,Operations,Dubai,Junior,2024-04-25,,58600.0,True
+E0370,Aisha Khan,Engineering,Dubai,Junior,2020-06-15,2025-12-23,74800.0,False
+E0371,Sami Evans,Marketing,London,Senior,2021-08-18,2022-08-15,88000.0,False
+E0372,Dana Khan,Sales,Berlin,Junior,2025-06-05,,108400.0,False
+E0373,Usman Khan,Sales,Manchester,Senior,2025-03-03,,81500.0,False
+E0374,Sami Fischer,Operations,Lisbon,Junior,2022-01-01,,66900.0,True
+E0375,Mateo Tanaka,Customer Support,London,Junior,2025-11-15,,40900.0,False
+E0376,Priya Evans,Operations,Berlin,Senior,2025-03-04,,48000.0,False
+E0377,Vera Khan,Engineering,Lisbon,Junior,2018-12-30,,80700.0,False
+E0378,Ben Malik,Sales,Lisbon,Senior,2019-03-19,,108000.0,False
+E0379,Mateo Diaz,Sales,Lisbon,Senior,2022-04-01,,82600.0,False
+E0380,Jade Ahmed,Engineering,Berlin,Junior,2023-01-23,2023-05-31,72900.0,False
+E0381,Rosa Chen,Marketing,Berlin,Mid,2019-10-22,,75700.0,False
+E0382,Nadia Fischer,Engineering,London,Junior,2025-05-01,2026-09-28,80400.0,True
+E0383,Rosa Ito,Operations,Karachi,Junior,2026-02-05,,48000.0,True
+E0384,Aisha Novak,Operations,London,Junior,2023-07-04,2025-09-09,65800.0,False
+E0385,Usman Jensen,Engineering,London,Mid,2018-04-16,,73700.0,False
+E0386,Usman Silva,Sales,Lisbon,Junior,2025-05-31,,102600.0,False
+E0387,Imran Haddad,Sales,Berlin,Mid,2020-12-14,,54800.0,False
+E0388,Rosa Novak,Engineering,Dubai,Junior,2025-06-29,,69600.0,False
+E0389,Priya Tanaka,Operations,Manchester,Mid,2024-01-03,,41300.0,False
+E0390,Quinn Tanaka,Customer Support,Karachi,Lead,2023-08-19,,36100.0,False
+E0391,Zara Garcia,Sales,Manchester,Junior,2019-11-16,,50100.0,False
+E0392,Kofi Chen,Engineering,London,Mid,2025-01-13,2025-12-03,94800.0,False
+E0393,Aisha Weber,Engineering,Dubai,Mid,2023-02-20,,96500.0,False
+E0394,Dana Diaz,Engineering,Dubai,Senior,2024-08-05,,123900.0,False
+E0395,Usman Patel,Marketing,Dubai,Mid,2022-08-11,,46900.0,True
+E0396,Mateo Brown,Engineering,Lisbon,Senior,2024-10-29,,89900.0,True
+E0397,Aisha Khan,Customer Support,Berlin,Junior,2021-01-05,,55600.0,False
+E0398,Yusuf Khan,Operations,Berlin,Senior,2020-07-22,2025-09-08,63400.0,True
+E0399,Yusuf Rossi,Sales,Berlin,Senior,2022-07-26,,78500.0,True
+E0400,Yusuf Rossi,Sales,Dubai,Junior,2023-09-07,,57500.0,False
