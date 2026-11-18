@@ -1,0 +1,26 @@
+import pytest
+
+from app.core.config import Settings
+
+
+def test_defaults_are_free_local_stack() -> None:
+    s = Settings(_env_file=None)
+    assert s.is_sqlite
+    assert s.llm_provider == "ollama"
+    assert s.max_upload_mb == 20
+
+
+def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("LLM_MODEL", "gemini-2.0-flash")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@localhost/askdata")
+    s = Settings(_env_file=None)
+    assert s.llm_provider == "gemini"
+    assert s.llm_model == "gemini-2.0-flash"
+    assert not s.is_sqlite
+
+
+def test_invalid_provider_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    with pytest.raises(ValueError, match="llm_provider"):
+        Settings(_env_file=None)
