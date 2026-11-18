@@ -1,0 +1,322 @@
+"""The ask flow end to end, with a scripted fake LLM."""
+
+import re
+from collections.abc import Iterator
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.api.deps import get_today
+from app.llm.factory import get_llm
+from app.models import UsageEvent
+from app.query.executor import clear_cache
+from tests.conftest import Account, signup
+from tests.fakes import FakeLLM
+
+SAMPLE = Path(__file__).resolve().parent.parent / "sample_data"
+TODAY = date(2026, 11, 19)
+REVENUE_BY_REGION = {
+    "metric": "sum",
+    "metric_column": "revenue",
+    "group_by": ["region"],
+    "sort": {"by": "value", "direction": "desc"},
+    "chart": "bar",
+}
+
+
+@pytest.fixture(autouse=True)
+def _setup(app: FastAPI) -> Iterator[None]:
+    clear_cache()
+    app.dependency_overrides[get_today] = lambda: TODAY
+    yield
+    clear_cache()
+
+
+@pytest.fixture
+def acct(client: TestClient) -> Account:
+    return signup(client, "owner@acme.com", workspace="Acme")
+
+
+@pytest.fixture
+def dataset_id(client: TestClient, acct: Account) -> str:
+    content = (SAMPLE / "sales_orders.csv").read_bytes()
+    resp = client.post(
+        "/datasets", headers=acct.headers, files={"file": ("sales_orders.csv", content)}
+    )
+    assert resp.status_code == 201, resp.text
+    return str(resp.json()["id"])
+
+
+def use_llm(app: FastAPI, llm: FakeLLM) -> FakeLLM:
+    app.dependency_overrides[get_llm] = lambda: llm
+    return llm
+
+
+def ask(client: TestClient, acct: Account, question: str, **ids: str) -> Any:
+    return client.post("/chat/ask", headers=acct.headers, json={"question": question, **ids})
+
+
+def first_row_summary(prompt: str) -> str:
+    """A well-behaved fake: quotes the top row of the table it was given."""
+    rows = [line for line in prompt.split("Result:\n", 1)[1].splitlines()[1:] if "|" in line]
+    label, value = (part.strip() for part in rows[0].split("|"))
+    return f"{label} leads with {value} in revenue."
+
+
+# --- happy path ---------------------------------------------------------------------
+
+
+def test_ask_returns_computed_table_chart_summary_and_explanation(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    llm = use_llm(app, FakeLLM([REVENUE_BY_REGION], summary=first_row_summary))
+    resp = ask(client, acct, "Which region brings in the most revenue?", dataset_id=dataset_id)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    reply = body["reply"]
+    assert reply["status"] == "answered"
+
+    expected = (
+        pd.read_csv(SAMPLE / "sales_orders.csv")
+        .groupby("region")["revenue"]
+        .sum()
+        .sort_values(ascending=False)
+    )
+    table = reply["answer"]["table"]
+    assert table["columns"] == ["region", "sum_revenue"]
+    assert [r[0] for r in table["rows"]] == list(expected.index)
+    assert table["rows"][0][1] == pytest.approx(expected.iloc[0])
+
+    assert reply["answer"]["chart"] == {
+        "type": "bar", "x": "region", "y": "sum_revenue", "series": None
+    }  # fmt: skip
+    assert reply["content"].startswith(f"{expected.index[0]} leads with")
+    assert reply["answer"]["summary_source"] == "llm"
+
+    exp = reply["answer"]["explanation"]
+    assert exp["description"].startswith("Total revenue, by region")
+    assert "read_parquet(?)" in exp["sql"]
+    assert exp["plan"]["metric_column"] == "revenue"
+
+    # The model only ever saw the column summary: no row beyond the 3 samples per column.
+    prompt = llm.plan_calls[0][-1].content
+    assert "SO-00456" in prompt  # a sample value
+    assert "SO-02999" not in prompt and "SO-01500" not in prompt
+
+
+def test_summary_with_invented_number_is_replaced(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    use_llm(app, FakeLLM([REVENUE_BY_REGION], summary="Total revenue was 9,999,999 overall."))
+    reply = ask(client, acct, "Revenue by region", dataset_id=dataset_id).json()["reply"]
+    assert "9,999,999" not in reply["content"]
+    assert reply["answer"]["summary_source"] == "template"
+    top = reply["answer"]["table"]["rows"][0]
+    assert reply["content"].startswith(f"{top[0]} comes first with")
+
+
+def test_dates_are_resolved_in_code(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    use_llm(app, FakeLLM([{"metric": "count", "date_phrase": "last quarter"}], summary="Done."))
+    reply = ask(client, acct, "How many orders last quarter?", dataset_id=dataset_id).json()[
+        "reply"
+    ]
+    df = pd.read_csv(SAMPLE / "sales_orders.csv", parse_dates=["order_date"])
+    expected = ((df.order_date >= "2026-07-01") & (df.order_date < "2026-10-01")).sum()
+    assert reply["answer"]["table"]["rows"] == [[int(expected)]]
+    assert reply["answer"]["explanation"]["date_range"] == {
+        "start": "2026-07-01", "end": "2026-09-30", "label": "last quarter"
+    }  # fmt: skip
+
+
+# --- follow-ups, retries, clarification, failures -----------------------------------
+
+
+def test_follow_up_sends_previous_plan(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    split = {**REVENUE_BY_REGION, "group_by": ["region", "city"], "limit": 50}
+    llm = use_llm(app, FakeLLM([REVENUE_BY_REGION, split], summary="Here you go."))
+    first = ask(client, acct, "Revenue by region", dataset_id=dataset_id).json()
+    second = ask(client, acct, "now split by city", conversation_id=first["conversation_id"])
+    assert second.status_code == 200, second.text
+    assert second.json()["conversation_id"] == first["conversation_id"]
+
+    follow_up_prompt = llm.plan_calls[1]
+    history = [m.content for m in follow_up_prompt[-3:-1]]
+    assert history[0] == "Question: Revenue by region"
+    assert '"group_by":["region"]' in history[1]
+    assert second.json()["reply"]["answer"]["table"]["columns"] == ["region", "city", "sum_revenue"]
+
+
+def test_invalid_plan_is_retried_once_with_the_error(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str,
+    session_factory: sessionmaker[Session],
+) -> None:  # fmt: skip
+    bad = {"metric": "sum", "metric_column": "sales"}
+    good = {"metric": "sum", "metric_column": "revenue"}
+    llm = use_llm(app, FakeLLM([bad, good], summary="Done."))
+    reply = ask(client, acct, "total sales", dataset_id=dataset_id).json()["reply"]
+    assert reply["status"] == "answered"
+    retry_msg = llm.plan_calls[1][-1].content
+    assert "Unknown column 'sales'" in retry_msg
+    with session_factory() as db:
+        purposes = [u.purpose for u in db.scalars(select(UsageEvent))]
+    assert sorted(purposes) == ["plan", "plan", "summary"]
+
+
+def test_two_bad_plans_ask_user_to_rephrase(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    use_llm(app, FakeLLM(["not json at all", {"metric": "sum", "metric_column": "profit"}]))
+    reply = ask(client, acct, "profit margin?", dataset_id=dataset_id).json()["reply"]
+    assert reply["status"] == "failed"
+    assert reply["answer"] is None
+    assert "rephrase" in reply["content"]
+    assert "Unknown column 'profit'" in reply["content"]
+
+
+def test_clarification(app: FastAPI, client: TestClient, acct: Account, dataset_id: str) -> None:
+    use_llm(app, FakeLLM([{"clarification_needed": "Do you mean revenue or quantity?"}]))
+    reply = ask(client, acct, "How big were sales?", dataset_id=dataset_id).json()["reply"]
+    assert reply["status"] == "clarification"
+    assert reply["content"] == "Do you mean revenue or quantity?"
+    assert reply["answer"] is None
+
+
+def test_no_rows_gets_template_summary_without_llm(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    plan = {"metric": "count", "group_by": ["region"],
+            "filters": [{"column": "region", "op": "=", "value": "Antarctica"}]}  # fmt: skip
+    llm = use_llm(app, FakeLLM([plan]))
+    reply = ask(client, acct, "orders in Antarctica", dataset_id=dataset_id).json()["reply"]
+    assert reply["answer"]["table"]["rows"] == []
+    assert reply["content"].startswith("No rows matched")
+    assert len(llm.calls) == 1  # no summary call
+
+
+def test_llm_down_is_503(app: FastAPI, client: TestClient, acct: Account, dataset_id: str) -> None:
+    use_llm(app, FakeLLM(unavailable=True))
+    resp = ask(client, acct, "anything", dataset_id=dataset_id)
+    assert resp.status_code == 503
+    assert "switched off" in resp.json()["detail"]
+
+
+def test_repeat_question_is_served_from_cache(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    use_llm(app, FakeLLM([REVENUE_BY_REGION, REVENUE_BY_REGION], summary="Done."))
+    a = ask(client, acct, "Revenue by region", dataset_id=dataset_id).json()["reply"]
+    b = ask(client, acct, "Revenue by region", dataset_id=dataset_id).json()["reply"]
+    assert not a["answer"]["explanation"]["cached"]
+    assert b["answer"]["explanation"]["cached"]
+    assert a["answer"]["table"] == b["answer"]["table"]
+
+
+def test_request_validation(client: TestClient, acct: Account, dataset_id: str) -> None:
+    assert ask(client, acct, "   ", dataset_id=dataset_id).status_code == 422
+    assert ask(client, acct, "x" * 501, dataset_id=dataset_id).status_code == 422
+    assert ask(client, acct, "no target").status_code == 422
+
+
+# --- conversations + isolation -------------------------------------------------------
+
+
+def test_conversation_history_and_delete(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    use_llm(app, FakeLLM([REVENUE_BY_REGION, {"metric": "count"}], summary="Done."))
+    conv_id = ask(client, acct, "Revenue by region", dataset_id=dataset_id).json()[
+        "conversation_id"
+    ]
+    ask(client, acct, "and how many orders?", conversation_id=conv_id)
+
+    listed = client.get("/chat/conversations", headers=acct.headers).json()
+    assert [c["id"] for c in listed] == [conv_id]
+    assert listed[0]["title"] == "Revenue by region"
+
+    conv = client.get(f"/chat/conversations/{conv_id}", headers=acct.headers).json()
+    assert [(m["role"], m["status"]) for m in conv["messages"]] == [
+        ("user", None), ("assistant", "answered"), ("user", None), ("assistant", "answered")
+    ]  # fmt: skip
+    assert conv["messages"][1]["answer"]["table"]["columns"] == ["region", "sum_revenue"]
+
+    assert client.delete(f"/chat/conversations/{conv_id}", headers=acct.headers).status_code == 204
+    assert client.get(f"/chat/conversations/{conv_id}", headers=acct.headers).status_code == 404
+
+
+def test_other_workspace_cannot_use_dataset_or_conversation(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    use_llm(app, FakeLLM([REVENUE_BY_REGION], summary="Done."))
+    conv_id = ask(client, acct, "Revenue by region", dataset_id=dataset_id).json()[
+        "conversation_id"
+    ]
+    other = signup(client, "spy@other.com", workspace="Other")
+
+    assert ask(client, other, "Revenue?", dataset_id=dataset_id).status_code == 404
+    assert ask(client, other, "Revenue?", conversation_id=conv_id).status_code == 404
+    assert client.get(f"/chat/conversations/{conv_id}", headers=other.headers).status_code == 404
+    assert client.get("/chat/conversations", headers=other.headers).json() == []
+
+
+def test_teammate_cannot_read_private_conversation(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str,
+    session_factory: sessionmaker[Session],
+) -> None:  # fmt: skip
+    """Same workspace, different user: conversations are private."""
+    from app.core.security import hash_password
+    from app.models import User
+
+    with session_factory() as db:
+        db.add(User(email="mate@acme.com", password_hash=hash_password("teammate-pass"),
+                    workspace_id=acct.workspace["id"]))  # fmt: skip
+        db.commit()
+    token = client.post(
+        "/auth/login", data={"username": "mate@acme.com", "password": "teammate-pass"}
+    ).json()["access_token"]
+    mate = {"Authorization": f"Bearer {token}"}
+
+    use_llm(app, FakeLLM([REVENUE_BY_REGION], summary="Done."))
+    conv_id = ask(client, acct, "Revenue by region", dataset_id=dataset_id).json()[
+        "conversation_id"
+    ]
+    assert client.get(f"/chat/conversations/{conv_id}", headers=mate).status_code == 404
+    # ...but the teammate can ask about the shared dataset in their own conversation.
+    assert client.get(f"/datasets/{dataset_id}", headers=mate).status_code == 200
+
+
+def test_usage_is_logged_per_workspace(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str,
+    session_factory: sessionmaker[Session],
+) -> None:  # fmt: skip
+    use_llm(app, FakeLLM([REVENUE_BY_REGION], summary="Done."))
+    ask(client, acct, "Revenue by region", dataset_id=dataset_id)
+    with session_factory() as db:
+        rows = list(db.scalars(select(UsageEvent)))
+        total = db.scalar(select(func.sum(UsageEvent.prompt_tokens)))
+    assert {u.workspace_id for u in rows} == {acct.workspace["id"]}
+    assert {(u.provider, u.model) for u in rows} == {("fake", "fake-1")}
+    assert total == 200
+
+
+def test_sql_shown_to_user_has_placeholders_only(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    plan = {"metric": "count", "filters": [{"column": "customer", "op": "=", "value": "Apex Labs"}]}
+    use_llm(app, FakeLLM([plan], summary="Done."))
+    exp = ask(client, acct, "Apex orders", dataset_id=dataset_id).json()["reply"]["answer"][
+        "explanation"
+    ]
+    assert "Apex Labs" not in exp["sql"]
+    assert exp["params"] == ["Apex Labs"]
+    assert not re.search(r"[A-Za-z]:[\\/]|/tmp/|data/workspaces", exp["sql"] + str(exp["params"]))

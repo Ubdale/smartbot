@@ -20,15 +20,18 @@ dependencies = [
     "duckdb>=1.1",
     "pandas>=2.2",
     "openpyxl>=3.1",
+    "httpx>=0.28",
+    "cachetools>=5.5",
+    "rapidfuzz>=3.10",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3",
-    "httpx>=0.28",
     "ruff>=0.8",
     "mypy>=1.13",
     "pandas-stubs>=2.2",
+    "types-cachetools>=5.5",
 ]
 
 [tool.uv]
@@ -57,7 +60,7 @@ known-third-party = ["alembic"]
 known-first-party = ["app"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106", "S107", "S608"]
+"tests/**" = ["S101", "S105", "S106", "S107", "S608", "PT018"]
 "scripts/**" = ["S311"]  # seeded demo data, not crypto
 "tests/conftest.py" = ["S101", "S105", "S106", "S107", "S608", "E402"]
 

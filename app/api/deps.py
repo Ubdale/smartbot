@@ -5,6 +5,7 @@ Workspace isolation rule: every query for customer data must go through
 caller's workspace are reported as 404, never 403, so their existence isn't leaked.
 """
 
+from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, status
@@ -59,3 +60,11 @@ def workspace_scoped[S: Select[Any]](stmt: S, model: Any, user: User) -> S:
 
 def not_found(what: str = "Resource") -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{what} not found")
+
+
+def get_today() -> date:
+    """Today's date (UTC) for resolving "last quarter" etc. Overridden in tests."""
+    return datetime.now(UTC).date()
+
+
+Today = Annotated[date, Depends(get_today)]
