@@ -8,7 +8,7 @@ import pytest
 from pydantic import SecretStr
 
 from app.core.config import Settings
-from app.llm.base import ChatMessage, LLMUnavailableError
+from app.llm.base import ChatMessage, LLMProvider, LLMUnavailableError
 from app.llm.factory import make_provider
 from app.llm.gemini_provider import GeminiProvider
 from app.llm.groq_provider import GroqProvider
@@ -174,7 +174,7 @@ def test_groq_errors(status: int, message: str) -> None:
     [
         ({}, OllamaProvider, "qwen2.5:7b-instruct"),
         ({"llm_provider": "gemini", "gemini_api_key": "k"}, GeminiProvider, "gemini-2.5-flash"),
-        ({"llm_provider": "groq", "groq_api_key": "k"}, GroqProvider, "llama-3.3-70b-versatile"),
+        ({"llm_provider": "groq", "groq_api_key": "k"}, GroqProvider, "openai/gpt-oss-120b"),
         ({"llm_provider": "gemini", "gemini_api_key": "k", "llm_model": "gemini-3.5-flash"},
          GeminiProvider, "gemini-3.5-flash"),
     ],
@@ -231,3 +231,72 @@ def test_gemini_summarizer_never_waits_on_rate_limit() -> None:
     assert isinstance(planner, GeminiProvider)
     assert isinstance(summarizer, GeminiProvider)
     assert (planner.max_retry_wait, summarizer.max_retry_wait) == (20, 0)
+
+
+# --- fallback: gemini out of quota -> groq answers ------------------------------------
+
+
+class _Down(LLMProvider):
+    name, model = "down", "x"
+
+    def complete(self, messages: list[ChatMessage], **kw: Any) -> Any:
+        raise LLMUnavailableError("quota")
+
+
+class _Up(LLMProvider):
+    name, model = "up", "y"
+
+    def complete(self, messages: list[ChatMessage], **kw: Any) -> Any:
+        from app.llm.base import Completion
+
+        return Completion(json.dumps(PLAN) if kw.get("json_schema") else "ok", 10, 2, 5)
+
+
+def test_fallback_answers_and_logs_the_provider_that_answered() -> None:
+    from app.llm.factory import FallbackProvider
+
+    chain = FallbackProvider([_Down(), _Up()])
+    attempt = chain.plan("q", "schema", [])
+    assert attempt.plan is not None
+    assert attempt.call.provider == "up"  # usage is attributed to the real answerer
+    text, call = chain.summarize("q", "d", "t")
+    assert (text, call.provider) == ("ok", "up")
+
+
+def test_fallback_raises_last_error_when_all_fail() -> None:
+    from app.llm.factory import FallbackProvider
+
+    with pytest.raises(LLMUnavailableError, match="quota"):
+        FallbackProvider([_Down(), _Down()]).complete(MESSAGES)
+
+
+def test_fallback_settings_build_a_chain_where_gemini_does_not_wait() -> None:
+    from app.llm.factory import FallbackProvider
+
+    s = Settings(_env_file=None, llm_provider="gemini", gemini_api_key="k",
+                 llm_fallback_provider="groq", groq_api_key="g")  # fmt: skip
+    planner = make_provider(s)
+    assert isinstance(planner, FallbackProvider)
+    gemini_p, groq_p = planner.providers
+    assert isinstance(gemini_p, GeminiProvider)
+    assert gemini_p.max_retry_wait == 0  # switch to the backup instead of waiting
+    assert isinstance(groq_p, GroqProvider)
+    assert groq_p.model == "openai/gpt-oss-120b"
+    summarizer = make_provider(s, summary=True)
+    assert isinstance(summarizer, FallbackProvider)
+    assert [p.model for p in summarizer.providers] == [
+        "gemini-3.5-flash-lite",
+        "openai/gpt-oss-20b",
+    ]
+
+
+def test_prod_needs_fallback_key_too() -> None:
+    with pytest.raises(ValueError, match="LLM_FALLBACK_PROVIDER=groq needs its API key"):
+        Settings(
+            _env_file=None,
+            app_env="prod",
+            secret_key=SecretStr("x" * 40),
+            llm_provider="gemini",
+            gemini_api_key="k",
+            llm_fallback_provider="groq",
+        )

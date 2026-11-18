@@ -1,9 +1,12 @@
 """Turn an uploaded CSV/XLSX file into a clean Parquet file plus a profile."""
 
+import csv
+import itertools
 import re
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import duckdb
 import pandas as pd
@@ -106,13 +109,113 @@ def _ingest_csv(src: Path, out: Path) -> str:
     encoding = _ensure_utf8(src)
     if not src.read_bytes().strip():
         raise IngestError("The file is empty.")
-    source = f"read_csv({quote_literal(str(src))}, auto_detect=true, sample_size=-1, header=true)"
+    with src.open(newline="", encoding="utf-8") as fh:
+        first_lines = list(itertools.islice(csv.reader(fh), HEADER_SCAN_ROWS + 6))
+    skip = find_header_row([list(r) for r in first_lines])  # title lines above the header
+    source = (
+        f"read_csv({quote_literal(str(src))}, auto_detect=true, sample_size=-1, header=true, "
+        f"skip={int(skip)})"
+    )
     try:
         with duckdb.connect() as con:
             _write_parquet(con, source, out)
     except duckdb.Error as exc:
         raise IngestError(f"Could not parse the CSV file: {_first_line(exc)}") from exc
     return encoding
+
+
+# --- report-style files: title lines above the real header -----------------------------
+
+HEADER_SCAN_ROWS = 30
+_NUMERIC_TEXT = re.compile(r"^-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?$")
+_TOTAL_ROW = re.compile(r"^\s*(grand\s+|sub\s*)?totals?\b", re.I)
+
+
+def _is_blank(v: Any) -> bool:
+    if v is None:
+        return True
+    if isinstance(v, str):
+        return not v.strip()
+    try:
+        return bool(pd.isna(v))
+    except (TypeError, ValueError):
+        return False
+
+
+def _looks_numeric(v: Any) -> bool:
+    if isinstance(v, bool):
+        return False
+    if isinstance(v, int | float):
+        return True
+    return isinstance(v, str) and bool(_NUMERIC_TEXT.match(v.strip()))
+
+
+def _is_label(v: Any) -> bool:
+    return isinstance(v, str) and bool(v.strip()) and not _looks_numeric(v)
+
+
+def find_header_row(rows: list[list[Any]]) -> int:
+    """Index of the real header row in a sheet that may start with title lines.
+
+    A header is a row of >= 2 text labels whose columns the rows below keep filling.
+    Title rows ("Company Ltd", "Headcount by Location", "Date: ...") are sparser and
+    don't line up with the data. Returns 0 (first row) when unsure, as before.
+    """
+    filled = [{j for j, v in enumerate(r) if not _is_blank(v)} for r in rows]
+
+    def coverage(i: int) -> tuple[float, int]:
+        below = [f for f in filled[i + 1 :] if f][:5]
+        if not below or not filled[i]:
+            return 0.0, 0
+        cov = sum(len(filled[i] & b) / len(filled[i]) for b in below) / len(below)
+        return cov, max(len(b) for b in below)
+
+    for i in range(min(len(rows), HEADER_SCAN_ROWS)):
+        cols = filled[i]
+        if len(cols) < 2:
+            continue
+        cov, widest = coverage(i)
+        if cov >= 0.8 and any(
+            len(filled[k]) >= len(cols) and coverage(k)[0] >= 0.8 for k in range(i)
+        ):
+            return 0  # an earlier, equally wide row already lines up with the data
+        if all(_is_label(rows[i][j]) for j in cols) and cov >= 0.8 and len(cols) >= widest / 2:
+            return i
+    return 0
+
+
+def _leading_zero(v: Any) -> bool:
+    """'00123' is an ID, not a number: keep it as text."""
+    text = str(v).strip().lstrip("-")
+    return isinstance(v, str) and len(text) > 1 and text[0] == "0" and text[1] != "."
+
+
+def _typed_column(s: pd.Series) -> pd.Series:
+    """Give a column of raw cells one type: number, date/time or text."""
+    values = [v for v in s if not _is_blank(v)]
+    cleaned = s.map(lambda v: None if _is_blank(v) else v)
+    if not values:
+        return cleaned
+    if all(isinstance(v, bool) for v in values):
+        return cleaned
+    if all(_looks_numeric(v) and not _leading_zero(v) for v in values):
+        # Numbers, including "2,579" stored as text in the sheet.
+        as_text = cleaned.map(lambda v: v.replace(",", "") if isinstance(v, str) else v)
+        return pd.to_numeric(as_text, errors="coerce")
+    if all(isinstance(v, datetime | date) for v in values):
+        return pd.to_datetime(cleaned, errors="coerce")
+    # Text, or mixed cells (numbers and text): keep everything, as text.
+    return cleaned.map(lambda v: None if v is None else str(v).strip())
+
+
+def _drop_total_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Report sheets often end with a 'Total' row, which would be counted twice."""
+    while len(df):
+        first = next((v for v in df.iloc[-1] if not _is_blank(v)), None)
+        if not (isinstance(first, str) and _TOTAL_ROW.match(first)):
+            break
+        df = df.iloc[:-1]
+    return df
 
 
 def _xlsx_frame(src: Path, sheet: str | None) -> tuple[pd.DataFrame, str, list[str]]:
@@ -127,19 +230,23 @@ def _xlsx_frame(src: Path, sheet: str | None) -> tuple[pd.DataFrame, str, list[s
         chosen = sheet if sheet is not None else sheets[0]
         if chosen not in sheets:
             raise IngestError(f"Sheet {chosen!r} not found. Available: {', '.join(sheets)}")
-        df = pd.read_excel(book, sheet_name=chosen, nrows=MAX_ROWS + 1)
+        raw = pd.read_excel(
+            book, sheet_name=chosen, header=None, nrows=MAX_ROWS + HEADER_SCAN_ROWS + 1
+        )
 
-    df = df.dropna(how="all")
-    blank_cols = [c for c in df.columns if str(c).startswith("Unnamed:") and df[c].isna().all()]
-    df = df.drop(columns=blank_cols)
-    df.columns = pd.Index([str(c) for c in df.columns])
+    raw = raw.dropna(how="all").reset_index(drop=True)
+    if raw.empty:
+        raise IngestError("The sheet is empty.")
+    header = find_header_row(raw.head(HEADER_SCAN_ROWS + 6).values.tolist())
+    names = ["" if _is_blank(v) else str(v) for v in raw.iloc[header]]
+    df = raw.iloc[header + 1 :].reset_index(drop=True)
+    df.columns = pd.Index(clean_column_names(names))
 
+    # Drop columns that are blank in the header and empty below (sheet padding).
+    padding = [c for c, n in zip(df.columns, names, strict=True) if not n and df[c].isna().all()]
+    df = _drop_total_rows(df.drop(columns=padding))
     for col in df.columns:
-        if df[col].dtype == object:
-            inferred = pd.api.types.infer_dtype(df[col], skipna=True)
-            if inferred not in ("string", "empty", "date", "datetime", "boolean"):
-                # Mixed cells (e.g. numbers and text): keep everything, as text.
-                df[col] = df[col].map(lambda v: None if pd.isna(v) else str(v))
+        df[col] = _typed_column(df[col])
     return df, chosen, sheets
 
 

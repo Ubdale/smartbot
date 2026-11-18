@@ -104,6 +104,11 @@ def choose_chart(vp: ValidatedPlan, result: QueryResult) -> ChartSpec | None:
     dims, y, rows = result.dimensions, result.value_column, result.rows
     if not dims or len(rows) < 2:
         return None
+    numeric = [
+        r[-1] for r in rows if isinstance(r[-1], int | float) and not isinstance(r[-1], bool)
+    ]
+    if len(numeric) < 2:
+        return None  # nothing to plot (e.g. every value is empty): no blank chart
     x = dims[0]
     series = dims[1] if len(dims) > 1 else None
     is_time = vp.plan.time_grain is not None

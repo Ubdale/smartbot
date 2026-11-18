@@ -14,11 +14,14 @@ StorageBackend = Literal["local", "s3"]
 DEFAULT_MODELS: dict[str, str] = {
     "ollama": "qwen2.5:7b-instruct",
     "gemini": "gemini-2.5-flash",
-    "groq": "llama-3.3-70b-versatile",
+    "groq": "openai/gpt-oss-120b",
 }
 # Free tiers limit requests per minute *per model*, so summaries use a second model
 # (when the provider has a good small one) to roughly double free throughput.
-DEFAULT_SUMMARY_MODELS: dict[str, str] = {"gemini": "gemini-3.5-flash-lite"}
+DEFAULT_SUMMARY_MODELS: dict[str, str] = {
+    "gemini": "gemini-3.5-flash-lite",
+    "groq": "openai/gpt-oss-20b",
+}
 DEFAULT_SECRET = "change-me-in-production"  # noqa: S105 - placeholder, rejected in prod
 
 
@@ -40,6 +43,8 @@ class Settings(BaseSettings):
     llm_provider: LLMProviderName = "ollama"
     llm_model: str | None = None  # empty = the provider's default (DEFAULT_MODELS)
     llm_summary_model: str | None = None  # empty = DEFAULT_SUMMARY_MODELS, else llm_model
+    # Used when the main provider fails or hits its free-tier limit (e.g. gemini -> groq).
+    llm_fallback_provider: LLMProviderName | None = None
     ollama_base_url: str = "http://localhost:11434"
     # Layers to put on the GPU. 0 = CPU only (use on laptops with small GPUs, which
     # otherwise crash with "CUDA out of memory"). Unset = let Ollama decide.
@@ -96,9 +101,13 @@ class Settings(BaseSettings):
             if missing:
                 raise ValueError(f"STORAGE_BACKEND=s3 needs: {', '.join(missing)}")
         if self.app_env == "prod":
-            key = {"gemini": self.gemini_api_key, "groq": self.groq_api_key}.get(self.llm_provider)
-            if self.llm_provider != "ollama" and not key:
-                raise ValueError(f"LLM_PROVIDER={self.llm_provider} needs its API key in prod")
+            keys = {"gemini": self.gemini_api_key, "groq": self.groq_api_key}
+            for setting, provider in [
+                ("LLM_PROVIDER", self.llm_provider),
+                ("LLM_FALLBACK_PROVIDER", self.llm_fallback_provider),
+            ]:
+                if provider in keys and not keys[provider]:
+                    raise ValueError(f"{setting}={provider} needs its API key in prod")
         return self
 
     @property

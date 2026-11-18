@@ -181,8 +181,9 @@ Every setting is listed in [.env.example](.env.example). The main ones:
 |---|---|---|
 | `DATABASE_URL` | `sqlite:///./data/askdata.db` | Paste a Postgres/Neon URL to switch, then run `uv run alembic upgrade head` |
 | `LLM_PROVIDER` | `ollama` | `ollama`, `gemini` or `groq` |
-| `LLM_MODEL` | empty | Empty = the provider's default: `qwen2.5:7b-instruct` (ollama), `gemini-2.5-flash` (gemini), `llama-3.3-70b-versatile` (groq) |
+| `LLM_MODEL` | empty | Empty = the provider's default: `qwen2.5:7b-instruct` (ollama), `gemini-2.5-flash` (gemini), `openai/gpt-oss-120b` (groq) |
 | `LLM_SUMMARY_MODEL` | empty | Summary model. Empty = `gemini-3.5-flash-lite` on Gemini (a separate free quota), otherwise `LLM_MODEL` |
+| `LLM_FALLBACK_PROVIDER` | empty | Backup when the main provider is down or out of quota, e.g. `groq` behind `gemini` |
 | `STORAGE_BACKEND` | `local` | `s3` keeps uploads in S3-compatible storage (needs `S3_*`/`AWS_*` settings) |
 | `OLLAMA_NUM_GPU` | unset | `0` = CPU only (fixes GPU out-of-memory crashes on small GPUs) |
 | `OLLAMA_TIMEOUT_SECONDS` | `300` | How long to wait for the local model |

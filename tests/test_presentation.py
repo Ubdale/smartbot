@@ -139,3 +139,9 @@ def test_fallback_summary_reads_naturally() -> None:
     )
     count = result([[298]], [], "count")
     assert fallback_summary(vp(metric="count"), count) == "There are 298 matching rows."
+
+
+def test_no_chart_when_values_are_all_empty() -> None:
+    empty = result([["1", None], ["10", None], ["11", None]], ["column_2"])
+    plan = vp(metric="sum", metric_column="revenue", group_by=["region"], chart="bar")
+    assert choose_chart(plan, empty) is None

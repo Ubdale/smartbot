@@ -1,14 +1,70 @@
-"""Pick the LLM provider from settings (LLM_PROVIDER / LLM_MODEL). No code changes needed."""
+"""Pick the LLM provider(s) from settings. Switching providers needs no code changes.
 
-from typing import Annotated
+LLM_PROVIDER is the main model; LLM_FALLBACK_PROVIDER (optional) takes over for a
+request whenever the main one is unavailable or out of free-tier quota.
+"""
+
+from collections.abc import Callable
+from typing import Annotated, Any
 
 from fastapi import Depends
 
-from app.core.config import DEFAULT_MODELS, Settings, get_settings
-from app.llm.base import LLMProvider, LLMUnavailableError
+from app.core.config import DEFAULT_MODELS, DEFAULT_SUMMARY_MODELS, Settings, get_settings
+from app.llm.base import (
+    ChatMessage,
+    Completion,
+    LLMCall,
+    LLMProvider,
+    LLMUnavailableError,
+    PlanAttempt,
+)
 from app.llm.gemini_provider import GeminiProvider
 from app.llm.groq_provider import GroqProvider
 from app.llm.ollama_provider import OllamaProvider
+
+
+class FallbackProvider(LLMProvider):
+    """Try each provider in order; move on when one is unavailable or rate-limited."""
+
+    def __init__(self, providers: list[LLMProvider]) -> None:
+        if not providers:
+            raise ValueError("FallbackProvider needs at least one provider")
+        self.providers = providers
+        self.name = "+".join(p.name for p in providers)
+        self.model = providers[0].model
+
+    def _first_available[T](self, call: Callable[[LLMProvider], T]) -> T:
+        error = LLMUnavailableError("No language model is available right now.")
+        for provider in self.providers:
+            try:
+                return call(provider)
+            except LLMUnavailableError as exc:
+                error = exc
+        raise error
+
+    def complete(
+        self,
+        messages: list[ChatMessage],
+        *,
+        json_schema: dict[str, Any] | None = None,
+        max_tokens: int = 512,
+    ) -> Completion:
+        return self._first_available(
+            lambda p: p.complete(messages, json_schema=json_schema, max_tokens=max_tokens)
+        )
+
+    # plan/summarize delegate whole calls so usage is logged under the provider that answered.
+    def plan(
+        self,
+        question: str,
+        schema_text: str,
+        history: list[ChatMessage],
+        feedback: tuple[str, str] | None = None,
+    ) -> PlanAttempt:
+        return self._first_available(lambda p: p.plan(question, schema_text, history, feedback))
+
+    def summarize(self, question: str, description: str, table_text: str) -> tuple[str, LLMCall]:
+        return self._first_available(lambda p: p.summarize(question, description, table_text))
 
 
 def _check_model_family(provider: str, model: str) -> None:
@@ -23,35 +79,59 @@ def _check_model_family(provider: str, model: str) -> None:
         )
 
 
-def make_provider(settings: Settings, *, summary: bool = False) -> LLMProvider:
-    model = settings.summary_model_name if summary else settings.model_name
-    _check_model_family(settings.llm_provider, model)
-    if settings.llm_provider == "ollama":
+def _model_for(settings: Settings, provider: str, summary: bool) -> str:
+    if provider == settings.llm_provider:
+        return settings.summary_model_name if summary else settings.model_name
+    if summary:  # the fallback uses its provider's defaults
+        return DEFAULT_SUMMARY_MODELS.get(provider, DEFAULT_MODELS[provider])
+    return DEFAULT_MODELS[provider]
+
+
+def _single(settings: Settings, provider: str, *, summary: bool, patient: bool) -> LLMProvider:
+    model = _model_for(settings, provider, summary)
+    _check_model_family(provider, model)
+    if provider == "ollama":
         return OllamaProvider(
             model,
             settings.ollama_base_url,
             num_gpu=settings.ollama_num_gpu,
             timeout_seconds=settings.ollama_timeout_seconds,
         )
-    if settings.llm_provider == "gemini":
+    if provider == "gemini":
         if not settings.gemini_api_key:
-            raise LLMUnavailableError("LLM_PROVIDER=gemini needs GEMINI_API_KEY.")
-        # Summaries never wait on a rate limit: a code-written summary is shown instead.
+            raise LLMUnavailableError("Gemini needs GEMINI_API_KEY.")
         return GeminiProvider(
-            model, settings.gemini_api_key.get_secret_value(), max_retry_wait=0 if summary else 20
+            model,
+            settings.gemini_api_key.get_secret_value(),
+            # Wait out a short rate limit only when there's nothing else to try.
+            max_retry_wait=20 if patient else 0,
         )
     if not settings.groq_api_key:
-        raise LLMUnavailableError("LLM_PROVIDER=groq needs GROQ_API_KEY.")
+        raise LLMUnavailableError("Groq needs GROQ_API_KEY.")
     return GroqProvider(model, settings.groq_api_key.get_secret_value())
+
+
+def make_provider(settings: Settings, *, summary: bool = False) -> LLMProvider:
+    fallback = settings.llm_fallback_provider
+    if fallback is None or fallback == settings.llm_provider:
+        # Summaries never wait on a rate limit: a code-written summary is shown instead.
+        return _single(settings, settings.llm_provider, summary=summary, patient=not summary)
+    return FallbackProvider(
+        [
+            _single(settings, settings.llm_provider, summary=summary, patient=False),
+            _single(settings, fallback, summary=summary, patient=not summary),
+        ]
+    )
 
 
 _cached: dict[tuple[str, ...], LLMProvider] = {}
 
 
-def _cache_key(settings: Settings, model: str, summary: bool) -> tuple[str, ...]:
+def _cache_key(settings: Settings, summary: bool) -> tuple[str, ...]:
     return (
         settings.llm_provider,
-        model,
+        str(settings.llm_fallback_provider),
+        settings.summary_model_name if summary else settings.model_name,
         str(summary),
         settings.ollama_base_url,
         str(settings.ollama_num_gpu),
@@ -59,7 +139,7 @@ def _cache_key(settings: Settings, model: str, summary: bool) -> tuple[str, ...]
 
 
 def get_llm(settings: Annotated[Settings, Depends(get_settings)]) -> LLMProvider:
-    key = _cache_key(settings, settings.model_name, False)
+    key = _cache_key(settings, False)
     if key not in _cached:
         _cached[key] = make_provider(settings)
     return _cached[key]
@@ -70,9 +150,9 @@ def get_summary_llm(
     planner: Annotated[LLMProvider, Depends(get_llm)],
 ) -> LLMProvider:
     """The model that writes summaries; the planning model unless a separate one is set."""
-    if settings.summary_model_name == settings.model_name:
+    if settings.summary_model_name == settings.model_name and not settings.llm_fallback_provider:
         return planner
-    key = _cache_key(settings, settings.summary_model_name, True)
+    key = _cache_key(settings, True)
     if key not in _cached:
         _cached[key] = make_provider(settings, summary=True)
     return _cached[key]
