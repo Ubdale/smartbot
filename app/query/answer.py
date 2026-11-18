@@ -41,7 +41,31 @@ def table_text(result: QueryResult, limit: int = SUMMARY_ROWS) -> str:
     shown = min(len(result.rows), limit)
     note = f"({shown} of {len(result.rows)} rows shown"
     note += "; more groups exist beyond the limit)" if result.truncated else ")"
-    return "\n".join(lines) + "\n" + note
+    facts = key_facts(result)
+    text = "\n".join(lines) + "\n" + note
+    return text + ("\n\nKey facts (computed):\n" + "\n".join(facts) if facts else "")
+
+
+def key_facts(result: QueryResult) -> list[str]:
+    """Highest/lowest (and first/last for trends), so small models needn't scan rows."""
+    rows = [
+        r for r in result.rows if isinstance(r[-1], int | float) and not isinstance(r[-1], bool)
+    ]
+    if not result.dimensions or len(rows) < 2:
+        return []
+
+    def label(r: list[Any]) -> str:
+        return " / ".join(fmt_value(v) for v in r[:-1])
+
+    hi = max(rows, key=lambda r: r[-1])
+    lo = min(rows, key=lambda r: r[-1])
+    facts = [
+        f"- Highest: {label(hi)} with {fmt_value(hi[-1])}",
+        f"- Lowest: {label(lo)} with {fmt_value(lo[-1])}",
+    ]
+    if result.truncated:
+        facts[1] += " (lowest of the rows shown only)"
+    return facts
 
 
 def _summarize(

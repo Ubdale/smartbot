@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     llm_provider: LLMProviderName = "ollama"
     llm_model: str = "qwen2.5:7b-instruct"
     ollama_base_url: str = "http://localhost:11434"
+    # Layers to put on the GPU. 0 = CPU only (use on laptops with small GPUs, which
+    # otherwise crash with "CUDA out of memory"). Unset = let Ollama decide.
+    ollama_num_gpu: int | None = None
+    ollama_timeout_seconds: float = Field(default=300, gt=0)
     gemini_api_key: SecretStr | None = None
     groq_api_key: SecretStr | None = None
 

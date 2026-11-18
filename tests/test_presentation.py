@@ -108,3 +108,18 @@ def test_chart_rules() -> None:
         vp(metric="avg", metric_column="revenue", group_by=["region"], chart="pie"), by_region
     )
     assert spec is not None and spec.type == "bar"
+
+
+def test_summary_prompt_gets_code_computed_extremes() -> None:
+    from app.query.answer import key_facts, table_text
+
+    trend = result(
+        [["2025-01-01", 187693.45], ["2025-02-01", 146421.75], ["2025-03-01", 126410.7]],
+        ["month"],
+    )
+    assert key_facts(trend) == [
+        "- Highest: 2025-01-01 with 187,693.45",
+        "- Lowest: 2025-03-01 with 126,410.7",
+    ]
+    assert "Key facts (computed)" in table_text(trend)
+    assert key_facts(result([[42.0]], [])) == []  # single number: nothing to compare

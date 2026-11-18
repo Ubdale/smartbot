@@ -29,7 +29,8 @@ Rules:
 - chart: bar for comparing groups, line for trends over time, pie for shares of a total
   (few groups), none for a single number.
 - If the question is a follow-up ("now split by city", "only for 2025", "what about X"),
-  change the previous plan instead of starting over.
+  copy the previous plan and change only what was asked: keep its metric, groups,
+  filters and date_phrase. "Split by X" ADDS X to group_by.
 - If the question can't be answered from this table, or is truly ambiguous, set
   clarification_needed to a short question for the user and leave the rest default.
 Reply with the JSON plan only."""
@@ -73,6 +74,16 @@ EXAMPLES: list[tuple[str, dict[str, Any]]] = [
       "to ask about orders, stores or customers instead?"}),
 ]  # fmt: skip
 
+# A follow-up turn: (previous question, previous plan, follow-up, new plan).
+FOLLOW_UP_EXAMPLE: tuple[str, dict[str, Any], str, dict[str, Any]] = (
+    "Revenue by store this year",
+    {"metric": "sum", "metric_column": "amount", "group_by": ["store"],
+     "date_column": "order_day", "date_phrase": "this year", "chart": "bar"},
+    "now split by product type",
+    {"metric": "sum", "metric_column": "amount", "group_by": ["store", "product_type"],
+     "date_column": "order_day", "date_phrase": "this year", "limit": 50, "chart": "bar"},
+)  # fmt: skip
+
 
 @cache
 def plan_json_schema() -> dict[str, Any]:
@@ -93,15 +104,25 @@ def plan_json_schema() -> dict[str, Any]:
     return result
 
 
-def _example_messages() -> list["ChatMessage"]:
-    from app.llm.base import ChatMessage
+def compact_plan(plan: dict[str, Any] | QueryPlan) -> str:
+    """A plan as short JSON (defaults omitted): fewer tokens, which matters on CPU."""
+    model = plan if isinstance(plan, QueryPlan) else QueryPlan.model_validate(plan)
+    return json.dumps(model.model_dump(mode="json", exclude_defaults=True), separators=(",", ":"))
 
-    msgs = []
-    for question, plan in EXAMPLES:
-        full = QueryPlan.model_validate(plan).model_dump(mode="json")
-        msgs.append(ChatMessage("user", f"{EXAMPLE_TABLE}\n\nQuestion: {question}"))
-        msgs.append(ChatMessage("assistant", json.dumps(full, separators=(",", ":"))))
-    return msgs
+
+@cache
+def plan_system_prompt() -> str:
+    """Rules plus few-shot examples, all in one message. The example table is shown once."""
+    examples = "\n".join(f"Q: {q}\nA: {compact_plan(p)}" for q, p in EXAMPLES)
+    prev_q, prev_plan, follow_q, follow_plan = FOLLOW_UP_EXAMPLE
+    follow_up = (
+        f"Q: {prev_q}\nA: {compact_plan(prev_plan)}\n"
+        f"Q (follow-up): {follow_q}\nA: {compact_plan(follow_plan)}"
+    )
+    return (
+        f"{PLAN_SYSTEM}\n\nExamples for a different table (fields left out use defaults):\n"
+        f"{EXAMPLE_TABLE}\n\n{examples}\n\nFollow-up example:\n{follow_up}"
+    )
 
 
 def plan_messages(
@@ -110,8 +131,7 @@ def plan_messages(
     from app.llm.base import ChatMessage
 
     return [
-        ChatMessage("system", PLAN_SYSTEM),
-        *_example_messages(),
+        ChatMessage("system", plan_system_prompt()),
         *history,
         ChatMessage("user", f"{schema_text}\n\nQuestion: {question}"),
     ]

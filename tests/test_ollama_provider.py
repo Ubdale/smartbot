@@ -62,3 +62,33 @@ def test_errors_are_friendly(handler: Any, message: str) -> None:
 
 def test_schema_has_no_refs() -> None:
     assert "$ref" not in json.dumps(plan_json_schema())
+
+
+def test_num_gpu_option_and_oom_hint() -> None:
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(500, json={"error": "llama-server: CUDA error: out of memory"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    p = OllamaProvider("m", "http://x", client=client, num_gpu=0)
+    with pytest.raises(LLMUnavailableError, match="OLLAMA_NUM_GPU=0"):
+        p.complete([ChatMessage("user", "hi")])
+    assert seen["options"]["num_gpu"] == 0
+
+
+def test_timeout_is_friendly() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow")
+
+    with pytest.raises(LLMUnavailableError, match="took too long"):
+        provider(handler).complete([ChatMessage("user", "hi")])
+
+
+def test_prompt_is_compact() -> None:
+    from app.llm.prompts import plan_messages
+
+    msgs = plan_messages("q", 'Table "t" (1 rows). Columns:\n- a (number)', [])
+    assert len(msgs) == 2  # one system message with the examples, one question
+    assert sum(len(m.content) for m in msgs) < 4500  # ~1k tokens: CPU inference cost

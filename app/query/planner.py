@@ -6,6 +6,7 @@ from datetime import date
 from typing import Any
 
 from app.llm.base import ChatMessage, LLMCall, LLMProvider
+from app.llm.prompts import compact_plan
 from app.query.executor import PlanError, ValidatedPlan, columns_from_profile, validate_plan
 from app.schemas.query_plan import QueryPlan
 
@@ -51,7 +52,7 @@ def history_messages(turns: list[tuple[str, dict[str, Any]]]) -> list[ChatMessag
     msgs: list[ChatMessage] = []
     for question, plan in turns:
         msgs.append(ChatMessage("user", f"Question: {question}"))
-        msgs.append(ChatMessage("assistant", json.dumps(plan, separators=(",", ":"))))
+        msgs.append(ChatMessage("assistant", compact_plan(plan)))
     return msgs
 
 

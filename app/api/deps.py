@@ -8,7 +8,7 @@ caller's workspace are reported as 404, never 403, so their existence isn't leak
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import Select
 from sqlalchemy.orm import Session
@@ -19,6 +19,15 @@ from app.core.security import InvalidTokenError, decode_access_token
 from app.models import User, Workspace
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
+
+# Browsers authenticate with an HttpOnly cookie (the web app proxies /api to us, so
+# the cookie belongs to the frontend's own domain). API clients keep using Bearer.
+AUTH_COOKIE = "askdata_session"
+# Cookie-authenticated writes must carry this header. Other sites can't add custom
+# headers without a CORS preflight we never approve, so this blocks CSRF (on top of
+# SameSite=Lax).
+CSRF_HEADER = "X-AskData-CSRF"
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 DbSession = Annotated[Session, Depends(get_db)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
@@ -31,12 +40,17 @@ _UNAUTHORIZED = HTTPException(
 
 
 def get_current_user(
-    token: Annotated[str | None, Depends(oauth2_scheme)],
+    request: Request,
+    bearer: Annotated[str | None, Depends(oauth2_scheme)],
     db: DbSession,
     settings: AppSettings,
 ) -> User:
+    token = bearer or request.cookies.get(AUTH_COOKIE)
     if not token:
         raise _UNAUTHORIZED
+    cookie_write = bearer is None and request.method not in _SAFE_METHODS
+    if cookie_write and request.headers.get(CSRF_HEADER) != "1":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"Missing {CSRF_HEADER} header")
     try:
         claims = decode_access_token(settings, token)
     except InvalidTokenError:
