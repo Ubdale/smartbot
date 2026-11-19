@@ -13,6 +13,7 @@ from app.core.config import DEFAULT_MODELS, DEFAULT_SUMMARY_MODELS, Settings, ge
 from app.llm.base import (
     ChatMessage,
     Completion,
+    DocAnswer,
     LLMCall,
     LLMProvider,
     LLMUnavailableError,
@@ -68,6 +69,14 @@ class FallbackProvider(LLMProvider):
 
     def transcribe_table(self, image: bytes, mime: str) -> tuple[list[list[str]], LLMCall]:
         return self._first_available(lambda p: p.transcribe_table(image, mime))
+
+    def answer_from_passages(
+        self,
+        question: str,
+        passages: list[tuple[int, int | None, str]],
+        history: list[ChatMessage],
+    ) -> tuple[DocAnswer, LLMCall]:
+        return self._first_available(lambda p: p.answer_from_passages(question, passages, history))
 
 
 # Seconds to wait for a self-hosted model before switching to the backup provider.

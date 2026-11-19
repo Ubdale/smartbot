@@ -289,3 +289,21 @@ def summary_is_grounded(summary: str, result: QueryResult, question: str, extra:
         if not any(_is_rounding_of(c, a) for c in candidates for a in allowed):
             return False
     return True
+
+
+def text_is_grounded(answer: str, sources: list[str], question: str) -> bool:
+    """Document answers: every number and date must come from the cited passages."""
+    # Citation markers like [1] aren't claims. Every other number must be in the sources:
+    # no free small numbers here, since "6 months" vs "3 months" is exactly the kind of
+    # mistake that matters in a document.
+    answer = re.sub(r"\[\d+\]", " ", answer)
+    allowed = [n for text in [*sources, question] for n, _ in _numbers_in(text)]
+    allowed_dates = {d for text in sources for d in _ISO_DATE.findall(text)}
+    for d in _ISO_DATE.findall(answer):
+        if d not in allowed_dates:
+            return False
+    for n, percent in _numbers_in(_ISO_DATE.sub(" ", answer)):
+        candidates = [n, n / 100, n * 100] if percent else [n]
+        if not any(_is_rounding_of(c, a) for c in candidates for a in allowed):
+            return False
+    return True

@@ -55,6 +55,13 @@ class PlanAttempt:
     call: LLMCall
 
 
+@dataclass(frozen=True)
+class DocAnswer:
+    found: bool
+    text: str
+    sources: list[int]  # passage numbers the answer cites
+
+
 class LLMUnavailableError(RuntimeError):
     """The model can't be reached. The message is safe to show users."""
 
@@ -144,6 +151,32 @@ class LLMProvider(ABC):
         except (ValueError, KeyError, TypeError) as exc:
             raise LLMUnavailableError("The model couldn't read a table from this image.") from exc
         return [r for r in rows if any(r)], call
+
+    def answer_from_passages(
+        self,
+        question: str,
+        passages: list[tuple[int, int | None, str]],
+        history: list[ChatMessage],
+    ) -> tuple[DocAnswer, LLMCall]:
+        """Answer a document question from numbered passages, citing them."""
+        started = time.perf_counter()
+        out = self.complete(
+            prompts.doc_messages(question, passages, history),
+            json_schema=prompts.DOC_ANSWER_SCHEMA,
+            max_tokens=500,
+        )
+        call = self._call("answer", out, started, success=True)
+        try:
+            data = json.loads(out.text)
+            numbers = {n for n, _, _ in passages}
+            answer = DocAnswer(
+                found=bool(data.get("found")),
+                text=str(data.get("answer", "")).strip(),
+                sources=[int(s) for s in data.get("sources", []) if int(s) in numbers],
+            )
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise LLMUnavailableError("The model gave an unreadable answer. Try again.") from exc
+        return answer, call
 
     def _call(self, purpose: Purpose, out: Completion, started: float, *,
               success: bool) -> LLMCall:  # fmt: skip

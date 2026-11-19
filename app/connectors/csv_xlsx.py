@@ -22,8 +22,9 @@ from app.connectors.profiling import DatasetProfile, profile_parquet
 from app.query.sql import quote_ident, quote_literal
 
 FileFormat = Literal[
-    "csv", "tsv", "txt", "xlsx", "xls", "ods", "json", "parquet", "pdf", "png", "jpg", "webp"
-]
+    "csv", "tsv", "txt", "xlsx", "xls", "ods", "json", "parquet", "pdf", "png", "jpg", "webp",
+    "docx", "md",
+]  # fmt: skip
 IMAGE_MIME = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}
 MAX_SCANNED_PAGES = 5  # each page is one vision call; keep uploads under proxy time limits
 
@@ -49,6 +50,9 @@ SUFFIXES: dict[str, FileFormat] = {
     ".jpg": "jpg",
     ".jpeg": "jpg",
     ".webp": "webp",
+    ".docx": "docx",
+    ".md": "md",
+    ".markdown": "md",
 }
 SPREADSHEET_ENGINES = {"xlsx": "openpyxl", "xls": "calamine", "ods": "calamine"}
 MAX_PDF_PAGES = 300
@@ -445,6 +449,15 @@ def _scanned_pdf_frame(src: Path, transcribe: Transcriber) -> pd.DataFrame:
     finally:
         pdf.close()
     return _rows_frame(rows)
+
+
+def pdf_is_mostly_tables(src: Path) -> bool:
+    """True when the PDF is mainly tables (or scanned, so tables come from vision)."""
+    tables, text_chars = pdf_tables(src)
+    if text_chars == 0:
+        return True
+    table_chars = sum(len(c) for t in tables for r in t.rows for c in r)
+    return bool(tables) and table_chars >= 0.4 * text_chars
 
 
 def _pdf_frame(

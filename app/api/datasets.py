@@ -2,16 +2,24 @@
 
 import uuid
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import AppSettings, CurrentUser, DbSession, not_found, workspace_scoped
-from app.connectors.csv_xlsx import IMAGE_MIME, IngestError, Transcriber, detect_format, ingest_file
+from app.connectors.csv_xlsx import (
+    IMAGE_MIME,
+    IngestError,
+    Transcriber,
+    detect_format,
+    ingest_file,
+    pdf_is_mostly_tables,
+)
 from app.connectors.profiling import preview_parquet
 from app.core.config import Settings
+from app.documents.ingest import DOCUMENT_FORMATS, ingest_document
 from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
 from app.llm.factory import make_vision_provider
 from app.models import Dataset, UsageEvent, User
@@ -62,6 +70,28 @@ def _transcriber(vision: LLMProvider | None, calls: list[LLMCall]) -> Transcribe
     return transcribe
 
 
+Mode = Literal["auto", "table", "document"]
+
+
+def choose_kind(fmt: str, mode: Mode, path: Path) -> Literal["table", "document", "either"]:
+    """Table (answers computed with SQL) or document (answers quoted from text)?"""
+    if mode == "document":
+        if fmt not in DOCUMENT_FORMATS:
+            raise IngestError("Only PDF, Word, text and Markdown files can be read as documents.")
+        return "document"
+    if fmt in ("docx", "md"):
+        if mode == "table":
+            raise IngestError(f".{fmt} files are read as documents, not tables.")
+        return "document"
+    if mode == "table":
+        return "table"
+    if fmt == "pdf":
+        return "table" if pdf_is_mostly_tables(path) else "document"
+    if fmt == "txt":
+        return "either"  # a delimited table if it parses as one, otherwise prose
+    return "table"
+
+
 def _too_large(settings: Settings) -> HTTPException:
     return HTTPException(
         status.HTTP_413_CONTENT_TOO_LARGE,
@@ -101,6 +131,9 @@ async def upload_dataset(
     sheet: Annotated[
         str | None, Form(description="Spreadsheet sheet or PDF table (default: first/biggest)")
     ] = None,
+    mode: Annotated[
+        Mode, Form(description="auto, table (computed answers) or document (quoted answers)")
+    ] = "auto",
 ) -> UploadOut:
     # BodySizeLimitMiddleware already refused bodies far over the limit before parsing;
     # this enforces the exact per-file limit while copying.
@@ -112,7 +145,7 @@ async def upload_dataset(
         raise HTTPException(
             status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             "Unsupported file type. Use .csv, .tsv, .txt, .xlsx, .xls, .ods, .json, .parquet, "
-            ".pdf, or an image (.png, .jpg, .webp).",
+            ".pdf, .docx, .md or an image (.png, .jpg, .webp).",
         )
 
     storage = _storage(settings)
@@ -126,16 +159,25 @@ async def upload_dataset(
         vision_calls: list[LLMCall] = []
         needs_vision = fmt in IMAGE_MIME or fmt == "pdf"  # images; scanned PDFs
         transcribe = _transcriber(vision, vision_calls) if needs_vision else None
+        out = folder / PARQUET_NAME
         try:
             # CPU-bound (parsing, Parquet, profiling): keep the event loop free for others.
-            result = await run_in_threadpool(
-                ingest_file,
-                original,
-                fmt,
-                folder / PARQUET_NAME,
-                sheet=sheet,
-                transcribe=transcribe,
-            )
+            kind = await run_in_threadpool(choose_kind, fmt, mode, original)
+            table = None
+            if kind in ("table", "either"):
+                try:
+                    table = await run_in_threadpool(
+                        ingest_file, original, fmt, out, sheet=sheet, transcribe=transcribe
+                    )
+                except IngestError:
+                    if kind == "table":
+                        raise
+                if kind == "either" and table is not None and len(table.profile.columns) < 2:
+                    table = None  # one column of lines: it's prose, not a table
+            document = None
+            if table is None:
+                out.unlink(missing_ok=True)
+                document = await run_in_threadpool(ingest_document, original, fmt, out)
         except IngestError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
         try:
@@ -150,11 +192,12 @@ async def upload_dataset(
             name=(name or "").strip() or Path(filename).stem or "Untitled",
             original_filename=filename[:255],
             file_format=fmt,
-            sheet_name=result.sheet_name,
+            sheet_name=table.sheet_name if table else None,
             size_bytes=size,
-            row_count=result.profile.row_count,
-            columns=[c.to_dict() for c in result.profile.columns],
-            extraction=result.extraction,
+            row_count=table.profile.row_count if table else (document.passages if document else 0),
+            columns=[c.to_dict() for c in table.profile.columns] if table else [],
+            kind="table" if table else "document",
+            extraction=table.extraction if table else None,
         )
         db.add(ds)
         for call in vision_calls:
@@ -179,8 +222,8 @@ async def upload_dataset(
 
     return UploadOut(
         **DatasetOut.model_validate(ds).model_dump(),
-        sheet_names=result.sheet_names,
-        detected_encoding=result.encoding,
+        sheet_names=table.sheet_names if table else [],
+        detected_encoding=table.encoding if table else None,
     )
 
 

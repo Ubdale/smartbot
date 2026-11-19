@@ -54,10 +54,28 @@ class ExplanationOut(BaseModel):
 
 
 class AnswerOut(BaseModel):
+    """A computed answer over a table."""
+
+    type: Literal["table"] = "table"
     table: TableOut
     chart: ChartOut | None
     explanation: ExplanationOut
     summary_source: Literal["llm", "template"]
+
+
+class SourceOut(BaseModel):
+    n: int  # the number the answer cites, e.g. [1]
+    page: int | None
+    text: str
+    cited: bool
+
+
+class DocumentAnswerOut(BaseModel):
+    """An answer quoted from a document, with the passages it came from."""
+
+    type: Literal["document"]
+    grounded: bool  # False: the model's answer couldn't be backed up and was withheld
+    sources: list[SourceOut]
 
 
 class MessageOut(BaseModel):
@@ -67,7 +85,7 @@ class MessageOut(BaseModel):
     role: Literal["user", "assistant"]
     content: str
     status: Literal["answered", "clarification", "failed"] | None
-    answer: AnswerOut | None
+    answer: DocumentAnswerOut | AnswerOut | None
     created_at: datetime
 
 

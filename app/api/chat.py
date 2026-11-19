@@ -9,7 +9,8 @@ from sqlalchemy import select
 
 from app.api.datasets import require_parquet
 from app.api.deps import AppSettings, CurrentUser, DbSession, Today, not_found, workspace_scoped
-from app.llm.base import LLMProvider, LLMUnavailableError
+from app.documents.answer import DocumentAnswer, answer_document_question
+from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
 from app.llm.factory import get_llm, get_summary_llm
 from app.models import Conversation, Dataset, Message, UsageEvent, User
 from app.query.answer import Answer, answer_question
@@ -81,6 +82,19 @@ def _answer_payload(a: Answer, ds: Dataset) -> dict[str, Any] | None:
     }
 
 
+def _document_payload(doc: DocumentAnswer) -> dict[str, Any] | None:
+    if not doc.passages:
+        return None
+    return {
+        "type": "document",
+        "grounded": doc.grounded,
+        "sources": [
+            {"n": i, "page": p.page, "text": p.text, "cited": i in doc.cited}
+            for i, p in enumerate(doc.passages, start=1)
+        ],
+    }
+
+
 @router.post("/ask", response_model=AskResponse)
 def ask(
     body: AskRequest,
@@ -108,30 +122,51 @@ def ask(
         )
 
     parquet = require_parquet(settings, ds)
+    previous = list(pairwise(conv.messages)) if body.conversation_id else []
 
-    # Recent answered turns let follow-ups ("now split by city") modify the previous plan.
-    turns: list[tuple[str, dict[str, Any]]] = []
-    if body.conversation_id:
-        msgs = conv.messages
-        for q, a in pairwise(msgs):
-            if q.role == "user" and a.role == "assistant" and a.plan:
-                turns.append((q.content, a.plan))
-    history = history_messages(turns[-HISTORY_TURNS:])
-
+    content: str
+    status_: str
+    plan: dict[str, Any] | None
+    payload: dict[str, Any] | None
+    calls: list[LLMCall]
     try:
-        result = answer_question(
-            llm,
-            body.question,
-            dataset_id=ds.id,
-            dataset_name=ds.name,
-            dataset_version=ds.version,
-            row_count=ds.row_count,
-            profile=ds.columns,
-            parquet=parquet,
-            history=history,
-            today=today,
-            summarizer=summarizer,
-        )
+        if ds.kind == "document":
+            # Earlier questions and answers give follow-ups their context.
+            doc_turns = [
+                (q.content, a.content)
+                for q, a in previous
+                if q.role == "user" and a.role == "assistant" and a.status == "answered"
+            ]
+            doc = answer_document_question(
+                llm, body.question, parquet=parquet, history=doc_turns[-2:]
+            )
+            content, status_, plan, payload, calls = (
+                doc.text, doc.status, None, _document_payload(doc), doc.calls
+            )  # fmt: skip
+        else:
+            # Recent answered turns let follow-ups ("now split by city") modify the plan.
+            turns = [
+                (q.content, a.plan)
+                for q, a in previous
+                if q.role == "user" and a.role == "assistant" and a.plan
+            ]
+            result = answer_question(
+                llm,
+                body.question,
+                dataset_id=ds.id,
+                dataset_name=ds.name,
+                dataset_version=ds.version,
+                row_count=ds.row_count,
+                profile=ds.columns,
+                parquet=parquet,
+                history=history_messages(turns[-HISTORY_TURNS:]),
+                today=today,
+                summarizer=summarizer,
+            )
+            content, status_, payload, calls = (
+                result.summary, result.status, _answer_payload(result, ds), result.calls
+            )  # fmt: skip
+            plan = result.validated.plan.model_dump(mode="json") if result.validated else None
     except LLMUnavailableError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
@@ -140,17 +175,17 @@ def ask(
     question = Message(role="user", content=body.question, position=position, created_at=now)
     reply = Message(
         role="assistant",
-        content=result.summary,
-        status=result.status,
-        plan=result.validated.plan.model_dump(mode="json") if result.validated else None,
-        answer=_answer_payload(result, ds),
+        content=content,
+        status=status_,
+        plan=plan,
+        answer=payload,
         position=position + 1,
         created_at=now,
     )
     conv.messages.extend([question, reply])
     conv.updated_at = now
     db.add(conv)
-    for call in result.calls:
+    for call in calls:
         db.add(
             UsageEvent(
                 workspace_id=user.workspace_id,

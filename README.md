@@ -78,6 +78,17 @@ In `/docs`, click **Authorize** and sign in with your email and password to try 
 
 **Workspace isolation:** every query for company data goes through `workspace_scoped()` in [app/api/deps.py](app/api/deps.py). Anything outside your workspace returns 404, so you can't even tell whether it exists. [tests/test_isolation.py](tests/test_isolation.py) proves this.
 
+## What you can upload
+
+| Files | Mode | How answers are made |
+|---|---|---|
+| `.csv` `.tsv` `.txt` (delimited), `.xlsx` `.xls` `.ods`, `.json`, `.parquet` | Table | Computed by DuckDB, exact |
+| `.pdf` with tables | Table (each table is a choosable "sheet"; multi-page tables joined) | Computed, exact |
+| Images `.png` `.jpg` `.webp`, scanned PDFs | Table, marked **"read from an image by AI, please check"** | A vision model copies the cells (`VISION_PROVIDER`, default Gemini); code types them and computes answers |
+| `.pdf` (mostly text), `.docx`, `.md`, `.txt` (prose) | Document | Quoted from the document with page sources; every number in an answer must appear in the cited passages |
+
+PDFs and `.txt` files are routed automatically; send `mode=table` or `mode=document` with the upload to override.
+
 ## Datasets
 
 Every upload is converted once to **Parquet**, and every query reads that file with DuckDB. Files are stored per workspace in `data/workspaces/{workspace_id}/datasets/{dataset_id}/`, as `original.csv`/`.xlsx` plus `data.parquet`.
@@ -184,6 +195,7 @@ Every setting is listed in [.env.example](.env.example). The main ones:
 | `LLM_MODEL` | empty | Empty = the provider's default: `qwen2.5:7b-instruct` (ollama), `gemini-2.5-flash` (gemini), `openai/gpt-oss-120b` (groq) |
 | `LLM_SUMMARY_MODEL` | empty | Summary model. Empty = `gemini-3.5-flash-lite` on Gemini (a separate free quota), otherwise `LLM_MODEL` |
 | `LLM_FALLBACK_PROVIDER` | empty | Backup when the main provider is down or out of quota, e.g. `groq` behind `gemini` |
+| `VISION_PROVIDER` | empty | Reads tables from images/scans: `gemini` (default when `GEMINI_API_KEY` is set), `ollama` or `none`. Images are sent to that provider |
 | `STORAGE_BACKEND` | `local` | `s3` keeps uploads in S3-compatible storage (needs `S3_*`/`AWS_*` settings) |
 | `OLLAMA_NUM_GPU` | unset | `0` = CPU only (fixes GPU out-of-memory crashes on small GPUs) |
 | `OLLAMA_TIMEOUT_SECONDS` | `300` | How long to wait for the local model (capped at 60 s when a fallback provider is set) |

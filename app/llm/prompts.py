@@ -178,3 +178,37 @@ TABLE_ROWS_SCHEMA: dict[str, Any] = {
     },
     "required": ["rows"],
 }
+
+
+DOC_SYSTEM = """You answer questions about a document using ONLY the numbered passages given.
+- Answer in 1-4 sentences of plain English. Cite the passages you used like [1] or [2][3].
+- Copy numbers, dates and names exactly as written in the passages. Never calculate,
+  estimate or add facts that aren't in the passages.
+- If the passages don't contain the answer, set found to false and say briefly that the
+  document doesn't seem to cover it."""
+
+DOC_ANSWER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "found": {"type": "boolean"},
+        "answer": {"type": "string"},
+        "sources": {"type": "array", "items": {"type": "integer"}},
+    },
+    "required": ["found", "answer", "sources"],
+}
+
+
+def doc_messages(
+    question: str, passages: list[tuple[int, int | None, str]], history: list["ChatMessage"]
+) -> list["ChatMessage"]:
+    """passages: (number shown to the model, page, text)."""
+    from app.llm.base import ChatMessage
+
+    blocks = "\n\n".join(
+        f"[{n}]{f' (page {page})' if page else ''}\n{text}" for n, page, text in passages
+    )
+    return [
+        ChatMessage("system", DOC_SYSTEM),
+        *history,
+        ChatMessage("user", f"Passages:\n{blocks}\n\nQuestion: {question}"),
+    ]

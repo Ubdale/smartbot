@@ -112,7 +112,7 @@ def test_bad_csv_rejected(client: TestClient, acct: Account, content: bytes, mes
 
 
 def test_unsupported_extension(client: TestClient, acct: Account) -> None:
-    for name in ("data.docx", "data.exe", "data", "evil.csv.exe"):
+    for name in ("deck.pptx", "data.exe", "data", "evil.csv.exe"):
         assert upload(client, acct, name, b"a,b\n1,2\n").status_code == 415
 
 
