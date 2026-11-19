@@ -91,6 +91,15 @@ class CodeAnswerOut(BaseModel):
     blocks: list[CodeBlockOut]
 
 
+class FileAnswerOut(BaseModel):
+    """A file to download, e.g. a styled Excel workbook of an earlier answer."""
+
+    type: Literal["file"]
+    format: Literal["xlsx"]
+    message_id: str  # the answer to export
+    label: str
+
+
 class MessageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -98,7 +107,7 @@ class MessageOut(BaseModel):
     role: Literal["user", "assistant"]
     content: str
     status: Literal["answered", "clarification", "failed"] | None
-    answer: CodeAnswerOut | DocumentAnswerOut | AnswerOut | None
+    answer: FileAnswerOut | CodeAnswerOut | DocumentAnswerOut | AnswerOut | None
     rating: int | None = None  # 1 helpful, -1 wrong
     created_at: datetime
 

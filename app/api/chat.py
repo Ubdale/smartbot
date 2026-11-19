@@ -11,7 +11,7 @@ from itertools import pairwise
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -22,6 +22,7 @@ from app.core import ratelimit
 from app.core.config import Settings
 from app.core.db import get_session_factory
 from app.documents.answer import DocumentAnswer, answer_document_question
+from app.exporting import build_answer_workbook
 from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
 from app.llm.factory import get_llm, get_summary_llm
 from app.models import Conversation, Dataset, Message, UsageEvent, User
@@ -217,6 +218,8 @@ def run_ask(
     # Requests about the conversation itself, answered directly (no model call).
     if CODE_REQUEST.search(body.question) and ds.kind == "table":
         return _code_reply(db, conv, body, ds, previous, user)
+    if EXCEL_REQUEST.search(body.question) and ds.kind == "table":
+        return _excel_reply(db, conv, body, previous, user)
     if EXPORT_REQUEST.search(body.question):
         return _save_turn(
             db, conv, body,
@@ -328,6 +331,52 @@ CODE_REQUEST = re.compile(
     re.I,
 )
 EXPORT_REQUEST = re.compile(r"\b(download|export)\b", re.I)
+
+
+EXCEL_REQUEST = re.compile(r"\b(excel|xlsx|spreadsheet|workbook)\b", re.I)
+
+
+def _last_table_answer(
+    previous: list[tuple[Message, Message]],
+) -> tuple[Message, Message] | None:
+    for q, a in reversed(previous):
+        answer = a.answer or {}
+        if q.role == "user" and a.role == "assistant" and "table" in answer:
+            return q, a
+    return None
+
+
+def _excel_reply(
+    db: Session,
+    conv: Conversation,
+    body: AskRequest,
+    previous: list[tuple[Message, Message]],
+    user: User,
+) -> AskResponse:
+    """A styled Excel download of the latest table answer (no model call)."""
+    last = _last_table_answer(previous)
+    if last is None:
+        return _save_turn(
+            db, conv, body,
+            content=(
+                "Ask me for the data first (for example \u201ctasks assigned to Sara\u201d), "
+                "then ask for Excel and I'll give you a formatted workbook of that answer."
+            ),
+            status_="answered", plan=None, payload=None, calls=[], user=user,
+        )  # fmt: skip
+    question, answer = last
+    extras = ", and a chart." if (answer.answer or {}).get("chart") else "."
+    return _save_turn(
+        db, conv, body,
+        content=(
+            f"Here's a formatted Excel workbook of \u201c{question.content}\u201d: "
+            f"styled header, filters, number formats{extras}"
+        ),
+        status_="answered", plan=None,
+        payload={"type": "file", "format": "xlsx", "message_id": answer.id,
+                 "label": question.content[:120]},
+        calls=[], user=user,
+    )  # fmt: skip
 
 
 def _code_reply(
@@ -478,4 +527,35 @@ def give_feedback(
         message_id=reply.id,
         rating=reply.rating,
         learned=reply.rating == 1 and reply.plan is not None,
+    )
+
+
+@router.get("/messages/{message_id}/export.xlsx")
+def export_answer_xlsx(message_id: str, user: CurrentUser, db: DbSession) -> Response:
+    """A styled Excel workbook of a table answer: title, summary, formatted table, chart."""
+    reply = db.get(Message, message_id)
+    if reply is None or reply.role != "assistant":
+        raise not_found("Answer")
+    conv = _conversation(db, user, reply.conversation_id)  # checks it's the user's own
+    answer = reply.answer or {}
+    if answer.get("type", "table") != "table" or "table" not in answer:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This answer has no table to export.")
+    question = next((m for m in conv.messages if m.position == reply.position - 1), None)
+    ds = db.get(Dataset, conv.dataset_id)
+    content = build_answer_workbook(
+        question=question.content if question else "AskData answer",
+        summary=reply.content,
+        table=answer["table"],
+        chart=answer.get("chart"),
+        dataset_name=ds.name if ds else "",
+        created_at=reply.created_at,
+    )
+    audit.record(db, user, "answer.exported", target_type="message", target_id=reply.id,
+                 format="xlsx")  # fmt: skip
+    db.commit()
+    name = re.sub(r"[^A-Za-z0-9]+", "-", question.content if question else "answer").strip("-")
+    return Response(
+        content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{(name or "answer")[:60]}.xlsx"'},
     )

@@ -461,3 +461,73 @@ def test_download_request_points_to_buttons(
     reply = ask(client, acct, "give me a download option", dataset_id=dataset_id).json()["reply"]
     assert "CSV" in reply["content"]
     assert llm.calls == []
+
+
+# --- styled Excel -------------------------------------------------------------------------
+
+
+def test_excel_request_gives_a_styled_workbook(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    import io
+
+    from openpyxl import load_workbook
+
+    llm = use_llm(app, FakeLLM([REVENUE_BY_REGION], summary="North leads."))
+    conv = ask(client, acct, "Revenue by region", dataset_id=dataset_id).json()["conversation_id"]
+    calls = len(llm.calls)
+    reply = ask(client, acct, "ok good but give me formatted and styled excel",
+                conversation_id=conv).json()["reply"]  # fmt: skip
+    assert len(llm.calls) == calls  # no model call
+    assert reply["answer"]["type"] == "file"
+    answer_id = reply["answer"]["message_id"]
+
+    resp = client.get(f"/chat/messages/{answer_id}/export.xlsx", headers=acct.headers)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/vnd.openxmlformats")
+    assert 'filename="Revenue-by-region.xlsx"' in resp.headers["content-disposition"]
+
+    ws = load_workbook(io.BytesIO(resp.content)).active
+    assert ws is not None
+    assert ws["A1"].value == "Revenue by region"
+    assert ws["A2"].value == "North leads."
+    assert [c.value for c in ws[5]][:2] == ["region", "Total revenue"]
+    assert ws["A5"].font.bold
+    assert ws["A5"].fill.fgColor.rgb.endswith("4F46E5")
+    assert ws["B6"].number_format == "#,##0.00"
+    assert isinstance(ws["B6"].value, float)
+    assert ws.auto_filter.ref == "A5:B9"
+    assert ws.freeze_panes == "A6"
+    assert len(ws._charts) == 1  # type: ignore[attr-defined]  # native Excel chart
+
+    other = signup(client, "spy@other.com", workspace="Other")
+    assert (
+        client.get(f"/chat/messages/{answer_id}/export.xlsx", headers=other.headers).status_code
+        == 404
+    )
+
+
+def test_excel_cells_never_become_formulas() -> None:
+    import io
+    from datetime import UTC, datetime
+
+    from openpyxl import load_workbook
+
+    from app.exporting import build_answer_workbook
+
+    data = build_answer_workbook(
+        question="q", summary="s", chart=None, dataset_name="d", created_at=datetime.now(UTC),
+        table={"columns": ["name", "when"], "rows": [["=HYPERLINK(\"evil\")", "2026-01-02"]]},
+    )  # fmt: skip
+    ws = load_workbook(io.BytesIO(data)).active
+    assert ws is not None
+    assert ws["A6"].value == '\'=HYPERLINK("evil")'
+    assert ws["B6"].number_format == "yyyy-mm-dd"
+
+
+def test_excel_before_any_answer_explains(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    use_llm(app, FakeLLM([]))
+    reply = ask(client, acct, "give me an excel file", dataset_id=dataset_id).json()["reply"]
+    assert "Ask me for the data first" in reply["content"]
