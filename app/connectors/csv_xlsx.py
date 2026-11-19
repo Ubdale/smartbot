@@ -1,7 +1,13 @@
-"""Turn an uploaded CSV/XLSX file into a clean Parquet file plus a profile."""
+"""Turn an uploaded table file into a clean Parquet file plus a profile.
+
+Supported: delimited text (.csv .tsv .txt), spreadsheets (.xlsx .xls .ods), .json,
+.parquet and tables inside .pdf files. Every reader produces rows of cells that go
+through the same cleanup (real header row, typed columns, no trailing Total rows).
+"""
 
 import csv
 import itertools
+import json
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -14,7 +20,25 @@ import pandas as pd
 from app.connectors.profiling import DatasetProfile, profile_parquet
 from app.query.sql import quote_ident, quote_literal
 
-FileFormat = Literal["csv", "xlsx"]
+FileFormat = Literal["csv", "tsv", "txt", "xlsx", "xls", "ods", "json", "parquet", "pdf"]
+
+SUFFIXES: dict[str, FileFormat] = {
+    ".csv": "csv",
+    ".tsv": "tsv",
+    ".tab": "tsv",
+    ".txt": "txt",
+    ".xlsx": "xlsx",
+    ".xlsm": "xlsx",
+    ".xls": "xls",
+    ".ods": "ods",
+    ".json": "json",
+    ".jsonl": "json",
+    ".ndjson": "json",
+    ".parquet": "parquet",
+    ".pdf": "pdf",
+}
+SPREADSHEET_ENGINES = {"xlsx": "openpyxl", "xls": "calamine", "ods": "calamine"}
+MAX_PDF_PAGES = 300
 
 MAX_COLUMNS = 500
 MAX_ROWS = 2_000_000
@@ -34,12 +58,7 @@ class IngestResult:
 
 
 def detect_format(filename: str) -> FileFormat | None:
-    suffix = Path(filename).suffix.lower()
-    if suffix == ".csv":
-        return "csv"
-    if suffix == ".xlsx":
-        return "xlsx"
-    return None
+    return SUFFIXES.get(Path(filename).suffix.lower())
 
 
 def clean_column_names(names: list[str]) -> list[str]:
@@ -105,16 +124,26 @@ def _write_parquet(con: duckdb.DuckDBPyConnection, source_sql: str, out: Path) -
     )
 
 
-def _ingest_csv(src: Path, out: Path) -> str:
+def _sniff_delimiter(sample: str, default: str) -> str:
+    try:
+        return csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
+    except csv.Error:
+        return default
+
+
+def _ingest_csv(src: Path, out: Path, default_delimiter: str = ",") -> str:
     encoding = _ensure_utf8(src)
     if not src.read_bytes().strip():
         raise IngestError("The file is empty.")
     with src.open(newline="", encoding="utf-8") as fh:
-        first_lines = list(itertools.islice(csv.reader(fh), HEADER_SCAN_ROWS + 6))
+        delimiter = _sniff_delimiter(fh.read(64 * 1024), default_delimiter)
+        fh.seek(0)
+        reader = csv.reader(fh, delimiter=delimiter)
+        first_lines = list(itertools.islice(reader, HEADER_SCAN_ROWS + 6))
     skip = find_header_row([list(r) for r in first_lines])  # title lines above the header
     source = (
         f"read_csv({quote_literal(str(src))}, auto_detect=true, sample_size=-1, header=true, "
-        f"skip={int(skip)})"
+        f"skip={int(skip)}, delim={quote_literal(delimiter)})"
     )
     try:
         with duckdb.connect() as con:
@@ -218,25 +247,11 @@ def _drop_total_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _xlsx_frame(src: Path, sheet: str | None) -> tuple[pd.DataFrame, str, list[str]]:
-    try:
-        book = pd.ExcelFile(src, engine="openpyxl")
-    except Exception as exc:
-        raise IngestError("Could not open the Excel file. Is it a valid .xlsx?") from exc
-    with book:
-        sheets = [str(s) for s in book.sheet_names]
-        if not sheets:
-            raise IngestError("The workbook has no sheets.")
-        chosen = sheet if sheet is not None else sheets[0]
-        if chosen not in sheets:
-            raise IngestError(f"Sheet {chosen!r} not found. Available: {', '.join(sheets)}")
-        raw = pd.read_excel(
-            book, sheet_name=chosen, header=None, nrows=MAX_ROWS + HEADER_SCAN_ROWS + 1
-        )
-
+def frame_from_rows(raw: pd.DataFrame) -> pd.DataFrame:
+    """Raw cells (no header yet) -> typed table: real header, no padding, no Total rows."""
     raw = raw.dropna(how="all").reset_index(drop=True)
     if raw.empty:
-        raise IngestError("The sheet is empty.")
+        raise IngestError("The table is empty.")
     header = find_header_row(raw.head(HEADER_SCAN_ROWS + 6).values.tolist())
     names = ["" if _is_blank(v) else str(v) for v in raw.iloc[header]]
     df = raw.iloc[header + 1 :].reset_index(drop=True)
@@ -247,19 +262,159 @@ def _xlsx_frame(src: Path, sheet: str | None) -> tuple[pd.DataFrame, str, list[s
     df = _drop_total_rows(df.drop(columns=padding))
     for col in df.columns:
         df[col] = _typed_column(df[col])
-    return df, chosen, sheets
+    return df
 
 
-def _ingest_xlsx(src: Path, out: Path, sheet: str | None) -> tuple[str, list[str]]:
-    df, chosen, sheets = _xlsx_frame(src, sheet)
+def _spreadsheet_frame(
+    src: Path, fmt: str, sheet: str | None
+) -> tuple[pd.DataFrame, str, list[str]]:
+    try:
+        book = pd.ExcelFile(src, engine=SPREADSHEET_ENGINES[fmt])  # type: ignore[arg-type]
+    except Exception as exc:
+        raise IngestError(f"Could not open the spreadsheet. Is it a valid .{fmt} file?") from exc
+    with book:
+        sheets = [str(s) for s in book.sheet_names]
+        if not sheets:
+            raise IngestError("The workbook has no sheets.")
+        chosen = sheet if sheet is not None else sheets[0]
+        if chosen not in sheets:
+            raise IngestError(f"Sheet {chosen!r} not found. Available: {', '.join(sheets)}")
+        raw = pd.read_excel(
+            book, sheet_name=chosen, header=None, nrows=MAX_ROWS + HEADER_SCAN_ROWS + 1
+        )
+    return frame_from_rows(raw), chosen, sheets
+
+
+def write_frame(df: pd.DataFrame, out: Path) -> None:
     _check_shape(len(df), len(df.columns))
     try:
         with duckdb.connect() as con:
-            con.register("xlsx_src", df)
-            _write_parquet(con, "xlsx_src", out)
+            con.register("frame_src", df)
+            _write_parquet(con, "frame_src", out)
     except duckdb.Error as exc:
-        raise IngestError(f"Could not convert the sheet: {_first_line(exc)}") from exc
-    return chosen, sheets
+        raise IngestError(f"Could not convert the table: {_first_line(exc)}") from exc
+
+
+# --- JSON and Parquet -------------------------------------------------------------------
+
+
+def _json_records(src: Path) -> list[Any]:
+    text = src.read_text(encoding="utf-8-sig", errors="replace").strip()
+    if not text:
+        raise IngestError("The file is empty.")
+    data: Any
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        try:  # JSON Lines: one object per line
+            data = [json.loads(line) for line in text.splitlines() if line.strip()]
+        except json.JSONDecodeError as exc:
+            raise IngestError(f"This isn't valid JSON (line {exc.lineno}).") from exc
+    if isinstance(data, dict):
+        # {"data": [...]} style wrappers: use the biggest list of objects inside.
+        lists = [v for v in data.values() if isinstance(v, list) and v and isinstance(v[0], dict)]
+        data = max(lists, key=len) if lists else [data]
+    if not isinstance(data, list) or not data:
+        raise IngestError("The JSON doesn't contain a list of records.")
+    return data
+
+
+def _json_frame(src: Path) -> pd.DataFrame:
+    records = _json_records(src)
+    if all(isinstance(r, list) for r in records):
+        return frame_from_rows(pd.DataFrame(records))  # [[header...], [row...], ...]
+    if not all(isinstance(r, dict) for r in records):
+        raise IngestError("The JSON records must all be objects (or all be lists).")
+    df = pd.json_normalize(records, sep=".")  # nested objects -> "address.city"
+    df.columns = pd.Index(clean_column_names([str(c) for c in df.columns]))
+    for col in df.columns:
+        # Lists/objects left in cells are kept as JSON text.
+        df[col] = df[col].map(lambda v: json.dumps(v) if isinstance(v, list | dict) else v)
+        df[col] = _typed_column(df[col])
+    return df
+
+
+def _ingest_parquet(src: Path, out: Path) -> None:
+    try:
+        with duckdb.connect() as con:
+            _write_parquet(con, f"read_parquet({quote_literal(str(src))})", out)
+    except duckdb.Error as exc:
+        raise IngestError(f"Could not read the Parquet file: {_first_line(exc)}") from exc
+
+
+# --- PDF tables -------------------------------------------------------------------------
+
+
+@dataclass
+class PdfTable:
+    first_page: int
+    last_page: int
+    rows: list[list[str]]
+
+    @property
+    def name(self) -> str:
+        if self.first_page == self.last_page:
+            return f"Table (page {self.first_page})"
+        return f"Table (pages {self.first_page}-{self.last_page})"
+
+
+def _clean_cell(v: Any) -> str:
+    return re.sub(r"\s+", " ", str(v)).strip() if v is not None else ""
+
+
+def pdf_tables(src: Path) -> tuple[list[PdfTable], int]:
+    """Tables found in the PDF (continuations across pages joined), and its text length."""
+    import pdfplumber  # imported lazily: only needed for PDFs
+
+    try:
+        pdf = pdfplumber.open(src)
+    except Exception as exc:
+        raise IngestError("Could not open the PDF. Is it a valid, unencrypted .pdf?") from exc
+    tables: list[PdfTable] = []
+    text_chars = 0
+    with pdf:
+        for number, page in enumerate(pdf.pages[:MAX_PDF_PAGES], start=1):
+            text_chars += len((page.extract_text() or "").strip())
+            for raw in page.extract_tables():
+                rows = [[_clean_cell(c) for c in r] for r in raw]
+                rows = [r for r in rows if any(r)]
+                if len(rows) < 2 or max(len(r) for r in rows) < 2:
+                    continue
+                prev = tables[-1] if tables else None
+                if (
+                    prev is not None
+                    and prev.last_page == number - 1
+                    and len(rows[0]) == len(prev.rows[0])
+                ):
+                    # A table continuing from the previous page (repeated header dropped).
+                    prev.rows.extend(rows[1:] if rows[0] == prev.rows[0] else rows)
+                    prev.last_page = number
+                else:
+                    tables.append(PdfTable(number, number, rows))
+    return tables, text_chars
+
+
+def _pdf_frame(src: Path, sheet: str | None) -> tuple[pd.DataFrame, str, list[str]]:
+    tables, text_chars = pdf_tables(src)
+    if not tables:
+        if text_chars == 0:
+            raise IngestError(
+                "This PDF has no selectable text (it looks scanned). Upload the pages as images."
+            )
+        raise IngestError("No tables found in this PDF.")
+    names = [t.name for t in tables]
+    if len(set(names)) < len(names):  # several tables on one page
+        names = [f"{n} #{i}" for i, n in enumerate(names, start=1)]
+    if sheet is not None:
+        if sheet not in names:
+            raise IngestError(f"Table {sheet!r} not found. Available: {', '.join(names)}")
+        chosen = names.index(sheet)
+    else:  # the biggest table by default
+        chosen = max(range(len(tables)), key=lambda i: len(tables[i].rows) * len(tables[i].rows[0]))
+    rows = tables[chosen].rows
+    width = max(len(r) for r in rows)
+    raw = pd.DataFrame([[c or None for c in r] + [None] * (width - len(r)) for r in rows])
+    return frame_from_rows(raw), names[chosen], names
 
 
 def _first_line(exc: Exception) -> str:
@@ -268,13 +423,23 @@ def _first_line(exc: Exception) -> str:
 
 def ingest_file(src: Path, fmt: FileFormat, out: Path, sheet: str | None = None) -> IngestResult:
     """Convert `src` to Parquet at `out` and profile it. Raises IngestError for bad input."""
-    if fmt == "csv":
-        encoding: str | None = _ingest_csv(src, out)
-        sheet_name: str | None = None
-        sheet_names: list[str] = []
+    encoding: str | None = None
+    sheet_name: str | None = None
+    sheet_names: list[str] = []
+    if fmt in ("csv", "tsv", "txt"):
+        encoding = _ingest_csv(src, out, default_delimiter="\t" if fmt == "tsv" else ",")
+    elif fmt in SPREADSHEET_ENGINES:
+        df, sheet_name, sheet_names = _spreadsheet_frame(src, fmt, sheet)
+        write_frame(df, out)
+    elif fmt == "pdf":
+        df, sheet_name, sheet_names = _pdf_frame(src, sheet)
+        write_frame(df, out)
+    elif fmt == "json":
+        write_frame(_json_frame(src), out)
+    elif fmt == "parquet":
+        _ingest_parquet(src, out)
     else:
-        encoding = None
-        sheet_name, sheet_names = _ingest_xlsx(src, out, sheet)
+        raise IngestError(f"Unsupported file type: .{fmt}")
 
     profile = profile_parquet(out)
     _check_shape(profile.row_count, len(profile.columns))

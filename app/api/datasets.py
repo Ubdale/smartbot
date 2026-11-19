@@ -65,12 +65,16 @@ def _get_dataset(db: DbSession, user: User, dataset_id: str) -> Dataset:
 
 @router.post("", response_model=UploadOut, status_code=status.HTTP_201_CREATED)
 async def upload_dataset(
-    file: Annotated[UploadFile, File(description="A .csv or .xlsx file")],
+    file: Annotated[
+        UploadFile, File(description="A table file: csv, xlsx, xls, ods, json, pdf...")
+    ],
     user: CurrentUser,
     db: DbSession,
     settings: AppSettings,
     name: Annotated[str | None, Form(max_length=200)] = None,
-    sheet: Annotated[str | None, Form(description="Excel sheet (default: first)")] = None,
+    sheet: Annotated[
+        str | None, Form(description="Spreadsheet sheet or PDF table (default: first/biggest)")
+    ] = None,
 ) -> UploadOut:
     # BodySizeLimitMiddleware already refused bodies far over the limit before parsing;
     # this enforces the exact per-file limit while copying.
@@ -80,7 +84,9 @@ async def upload_dataset(
     fmt = detect_format(filename)
     if fmt is None:
         raise HTTPException(
-            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Only .csv and .xlsx files are supported."
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            "Unsupported file type. Use .csv, .tsv, .txt, .xlsx, .xls, .ods, .json, .parquet or "
+            ".pdf.",
         )
 
     storage = _storage(settings)

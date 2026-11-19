@@ -24,6 +24,9 @@ dependencies = [
     "cachetools>=5.5",
     "rapidfuzz>=3.10",
     "boto3>=1.35",
+    "pdfplumber>=0.11",
+    "python-docx>=1.1",
+    "python-calamine>=0.3",
 ]
 
 [dependency-groups]
@@ -36,6 +39,9 @@ dev = [
     "moto[s3]>=5.0",
     "boto3-stubs[s3]>=1.35",
     "types-openpyxl>=3.1",
+    "fpdf2>=2.8",
+    "xlwt>=1.3",
+    "odfpy>=1.4",
 ]
 
 [tool.uv]
@@ -75,5 +81,5 @@ plugins = ["pydantic.mypy"]
 files = ["app", "tests", "scripts", "alembic/env.py"]
 
 [[tool.mypy.overrides]]
-module = ["alembic.*"]
+module = ["alembic.*", "xlwt"]
 ignore_missing_imports = true

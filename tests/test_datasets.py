@@ -112,7 +112,7 @@ def test_bad_csv_rejected(client: TestClient, acct: Account, content: bytes, mes
 
 
 def test_unsupported_extension(client: TestClient, acct: Account) -> None:
-    for name in ("data.xls", "data.json", "data", "evil.csv.exe"):
+    for name in ("data.docx", "data.exe", "data", "evil.csv.exe"):
         assert upload(client, acct, name, b"a,b\n1,2\n").status_code == 415
 
 
@@ -237,7 +237,7 @@ def test_xlsx_mixed_column_kept_as_text(client: TestClient, acct: Account) -> No
 def test_corrupt_xlsx_rejected(client: TestClient, acct: Account) -> None:
     resp = upload(client, acct, "broken.xlsx", b"this is not a zip file")
     assert resp.status_code == 400
-    assert "Excel" in resp.json()["detail"]
+    assert "spreadsheet" in resp.json()["detail"]
 
 
 # --- list / get / preview / delete -----------------------------------------------------

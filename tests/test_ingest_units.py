@@ -26,7 +26,10 @@ def test_clean_column_names() -> None:
 def test_detect_format() -> None:
     assert detect_format("Report.CSV") == "csv"
     assert detect_format("book.xlsx") == "xlsx"
-    assert detect_format("book.xls") is None
+    assert detect_format("book.xls") == "xls"
+    assert detect_format("Data.JSONL") == "json"
+    assert detect_format("report.pdf") == "pdf"
+    assert detect_format("notes.docx") is None
     assert detect_format("noext") is None
 
 
