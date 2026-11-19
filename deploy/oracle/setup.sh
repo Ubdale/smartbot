@@ -40,9 +40,12 @@ sleep 3
 ollama pull "$MODEL"
 
 echo "==> 2/4 Firewall (ports 80, 443)"
+# Oracle images end INPUT with a catch-all REJECT; the ACCEPTs must come before it.
+# Its position differs between images, so look it up instead of assuming a line number.
 for port in 443 80; do
-  iptables -C INPUT -p tcp --dport "$port" -m state --state NEW -j ACCEPT 2>/dev/null \
-    || iptables -I INPUT 6 -p tcp --dport "$port" -m state --state NEW -j ACCEPT
+  while iptables -D INPUT -p tcp --dport "$port" -m state --state NEW -j ACCEPT 2>/dev/null; do :; done
+  reject_at=$(iptables -L INPUT -n --line-numbers | awk '$2 == "REJECT" { print $1; exit }')
+  iptables -I INPUT "${reject_at:-1}" -p tcp --dport "$port" -m state --state NEW -j ACCEPT
 done
 if command -v netfilter-persistent >/dev/null; then netfilter-persistent save; fi
 
