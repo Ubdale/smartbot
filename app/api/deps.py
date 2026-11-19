@@ -57,13 +57,28 @@ def get_current_user(
         raise _UNAUTHORIZED from None
 
     user = db.get(User, claims.user_id)
-    # Token must still match the user's current workspace (e.g. after a move or deletion).
-    if user is None or user.workspace_id != claims.workspace_id:
+    # Token must still match the user's current workspace (e.g. after a move or deletion),
+    # and must not predate a password change or "log out everywhere".
+    if (
+        user is None
+        or user.workspace_id != claims.workspace_id
+        or user.token_version != claims.token_version
+    ):
         raise _UNAUTHORIZED
     return user
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def require_admin(user: CurrentUser) -> User:
+    """Owners and admins manage the team; members only use the data."""
+    if user.role not in ("owner", "admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only owners and admins can do that.")
+    return user
+
+
+AdminUser = Annotated[User, Depends(require_admin)]
 
 
 def workspace_scoped[S: Select[Any]](stmt: S, model: Any, user: User) -> S:

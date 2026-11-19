@@ -22,6 +22,8 @@ jobs:
         run: uv run mypy
       - name: Pytest (SQLite)
         run: uv run pytest
+      - name: Known vulnerabilities in dependencies
+        run: uvx pip-audit --strict --progress-spinner off -r <(uv export --no-dev --no-hashes --frozen)
 
   # Same suite on real Postgres (production uses Neon). Throwaway container, no secrets.
   test-postgres:

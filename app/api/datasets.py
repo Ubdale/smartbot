@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
-from app import learning
+from app import audit, learning
 from app.api.deps import AppSettings, CurrentUser, DbSession, not_found, workspace_scoped
 from app.connectors.csv_xlsx import (
     IMAGE_MIME,
@@ -208,6 +208,9 @@ async def upload_dataset(
             extraction=table.extraction if table else None,
         )
         db.add(ds)
+        audit.record(db, user, "dataset.uploaded", target_type="dataset",
+                     target_id=dataset_id, name=ds.name, file=filename[:255],
+                     kind=ds.kind)  # fmt: skip
         for call in vision_calls:
             db.add(
                 UsageEvent(
@@ -264,6 +267,8 @@ def delete_dataset(
     dataset_id: str, user: CurrentUser, db: DbSession, settings: AppSettings
 ) -> None:
     ds = _get_dataset(db, user, dataset_id)
+    audit.record(db, user, "dataset.deleted", target_type="dataset", target_id=ds.id,
+                 name=ds.name)  # fmt: skip
     db.delete(ds)
     db.commit()
     _storage(settings).delete(ds.workspace_id, ds.id)

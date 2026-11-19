@@ -4,8 +4,9 @@ import logging
 
 from fastapi import FastAPI
 
-from app.api import auth, chat, datasets, health, workspaces
+from app.api import auth, chat, datasets, health, team, workspaces
 from app.core.config import get_settings
+from app.core.headers import SecurityHeadersMiddleware
 from app.core.limits import BodySizeLimitMiddleware
 
 MULTIPART_OVERHEAD = 64 * 1024  # form fields + boundaries around the file
@@ -25,8 +26,10 @@ def create_app() -> FastAPI:
         max_bytes=settings.max_upload_mb * 1024 * 1024 + MULTIPART_OVERHEAD,
         path_prefixes=("/datasets",),
     )
+    app.add_middleware(SecurityHeadersMiddleware, hsts=settings.app_env == "prod")
     app.include_router(health.router)
     app.include_router(auth.router)
+    app.include_router(team.router)  # before /workspaces/{id} so "me/..." routes match
     app.include_router(workspaces.router)
     app.include_router(datasets.router)
     app.include_router(chat.router)

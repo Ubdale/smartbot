@@ -31,3 +31,11 @@ def test_health_reports_db_failure(app: FastAPI) -> None:
     assert resp.status_code == 503
     assert resp.json()["status"] == "degraded"
     assert resp.json()["database"] == "error"
+
+
+def test_security_headers(client: TestClient) -> None:
+    resp = client.get("/health")
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert resp.headers["x-frame-options"] == "DENY"
+    assert "default-src 'none'" in resp.headers["content-security-policy"]
+    assert "strict-transport-security" not in resp.headers  # only in prod (HTTPS)

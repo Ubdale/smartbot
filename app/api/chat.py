@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app import learning
+from app import audit, learning
 from app.api.datasets import require_parquet
 from app.api.deps import AppSettings, CurrentUser, DbSession, Today, not_found, workspace_scoped
 from app.core import ratelimit
@@ -452,7 +452,10 @@ def get_conversation(conversation_id: str, user: CurrentUser, db: DbSession) -> 
 
 @router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_conversation(conversation_id: str, user: CurrentUser, db: DbSession) -> None:
-    db.delete(_conversation(db, user, conversation_id))
+    conv = _conversation(db, user, conversation_id)
+    audit.record(db, user, "conversation.deleted", target_type="conversation",
+                 target_id=conv.id)  # fmt: skip
+    db.delete(conv)
     db.commit()
 
 

@@ -36,6 +36,7 @@ def verify_password(password: str, password_hash: str | None) -> bool:
 class TokenClaims:
     user_id: str
     workspace_id: str
+    token_version: int = 0
 
 
 class InvalidTokenError(Exception):
@@ -43,12 +44,18 @@ class InvalidTokenError(Exception):
 
 
 def create_access_token(
-    settings: Settings, *, user_id: str, workspace_id: str, now: datetime | None = None
+    settings: Settings,
+    *,
+    user_id: str,
+    workspace_id: str,
+    token_version: int = 0,
+    now: datetime | None = None,
 ) -> str:
     issued = now or datetime.now(UTC)
     payload = {
         "sub": user_id,
         "ws": workspace_id,
+        "tv": token_version,
         "type": TOKEN_TYPE,
         "iat": issued,
         "exp": issued + timedelta(minutes=settings.access_token_expire_minutes),
@@ -70,4 +77,7 @@ def decode_access_token(settings: Settings, token: str) -> TokenClaims:
     sub, ws = payload.get("sub"), payload.get("ws")
     if payload.get("type") != TOKEN_TYPE or not isinstance(sub, str) or not isinstance(ws, str):
         raise InvalidTokenError("malformed token claims")
-    return TokenClaims(user_id=sub, workspace_id=ws)
+    tv = payload.get("tv", 0)
+    if not isinstance(tv, int):
+        raise InvalidTokenError("malformed token version")
+    return TokenClaims(user_id=sub, workspace_id=ws, token_version=tv)
