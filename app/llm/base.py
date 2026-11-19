@@ -17,7 +17,7 @@ from app.llm import prompts
 from app.schemas.query_plan import QueryPlan
 
 Role = Literal["system", "user", "assistant"]
-Purpose = Literal["plan", "summary", "vision", "answer"]
+Purpose = Literal["plan", "summary", "vision", "answer", "retrieve"]
 
 
 @dataclass(frozen=True)

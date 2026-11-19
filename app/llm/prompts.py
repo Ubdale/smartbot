@@ -26,8 +26,12 @@ Rules:
   date_column for trends over time ("by month", "monthly", "over time").
 - date_phrase: copy the time period from the question word for word ("last quarter",
   "this year", "in 2025", "last 30 days"). Do NOT convert it to dates. Set date_column too.
-- filters: op is one of = != > >= < <= in contains between. Use values from the
+- filters: op is one of = != > >= < <= in contains between about. Use values from the
   column samples when possible. "in" takes a list; "between" takes [low, high].
+  "about" keeps rows whose text column is ABOUT a topic by meaning, for questions like
+  "tasks about tax issues", "complaints related to delivery": value = the topic in a
+  few words. Use it on descriptive text columns (summary, description, comments), not
+  for names or statuses (use = or in for those).
 - "top N" / "bottom N": sort by value desc/asc and set limit N.
 - "Which X has the most/least Y" means the total (sum, or count) of Y per X, sorted, limit 1.
   Use min/max only for the single smallest/largest value ("the biggest order").
@@ -52,7 +56,8 @@ EXAMPLE_TABLE = """Table "orders" (12,400 rows). Columns:
 - product_type (text; e.g. "Coffee", "Tea", "Pastry"; 9 distinct)
 - customer_id (text; e.g. "C0192", "C0441", "C0007"; 2,310 distinct)
 - amount (number; 1.5 to 420)
-- is_online (boolean)"""
+- is_online (boolean)
+- review (text; e.g. "Great coffee, slow service", "Cold croissant"; 9,870 distinct)"""
 
 EXAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("How many orders were there last month?",
@@ -97,6 +102,10 @@ EXAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("How many Tea orders in 2024?",
      {"metric": "count", "date_column": "order_day", "date_phrase": "2024",
       "filters": [{"column": "product_type", "op": "=", "value": "Tea"}]}),
+    ("How many orders had complaints about waiting too long, by store?",
+     {"metric": "count", "group_by": ["store"],
+      "filters": [{"column": "review", "op": "about", "value": "long wait or slow service"}],
+      "chart": "bar"}),
     ("How is our employee morale?",
      {"clarification_needed": "This table has orders, not employee data. Do you want "
       "to ask about orders, stores or customers instead?"}),

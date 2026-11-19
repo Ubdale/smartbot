@@ -4,6 +4,7 @@ Lets users reproduce or extend an answer themselves: same filters, same date ran
 same grouping and sorting as what AskData computed.
 """
 
+import re
 from typing import Any
 
 from app.schemas.query_plan import QueryPlan
@@ -31,6 +32,13 @@ def _filter_line(f: dict[str, Any]) -> str:
         return f"df = df[{c}.isna()]" if op == "=" else f"df = df[{c}.notna()]"
     if op == "contains":
         return f"df = df[{c}.astype(str).str.contains({str(v)!r}, case=False, regex=False)]"
+    if op == "about":
+        # AskData matched these rows by meaning (AI-checked); keywords are an approximation.
+        words = "|".join(re.escape(w) for w in str(v).split() if len(w) > 2) or re.escape(str(v))
+        return (
+            f"df = df[{c}.astype(str).str.contains({words!r}, case=False, regex=True)]"
+            f"  # rows about {str(v)!r}: AskData matched these by meaning"
+        )
     if op == "in":
         values = v if isinstance(v, list) else [v]
         if all(isinstance(x, str) for x in values):

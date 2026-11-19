@@ -28,12 +28,15 @@ from app.llm.factory import get_llm, get_summary_llm
 from app.models import Conversation, Dataset, Message, UsageEvent, User
 from app.query.answer import Answer, answer_question
 from app.query.codegen import pandas_code
+from app.query.evidence import find_evidence
+from app.query.executor import PlanError
 from app.query.planner import history_messages
 from app.schemas.chat import (
     AskRequest,
     AskResponse,
     ConversationOut,
     ConversationSummary,
+    EvidenceOut,
     FeedbackOut,
     FeedbackRequest,
     MessageOut,
@@ -102,6 +105,9 @@ def _table_payload(a: Answer, ds: Dataset) -> dict[str, Any] | None:
             "cached": r.cached,
             "elapsed_ms": r.elapsed_ms,
             "data_note": AI_VISION_NOTE if ds.extraction == "ai_vision" else None,
+            # Table RAG: how names and topics were matched, and the matched rows (proof).
+            "retrieval_notes": a.retrieval_notes,
+            "topic_rows": {str(k): v[:5000] for k, v in a.topic_rows.items()},
         },
         "summary_source": a.summary_source,
     }
@@ -743,3 +749,42 @@ def export_answer(
                  format=fmt)  # fmt: skip
     db.commit()
     return _download(content, media_type, question, fmt)
+
+
+@router.get("/messages/{message_id}/evidence", response_model=EvidenceOut)
+def answer_evidence(
+    message_id: str,
+    user: CurrentUser,
+    db: DbSession,
+    settings: AppSettings,
+    today: Today,
+    group: str | None = None,
+) -> EvidenceOut:
+    """Proof: the rows behind an answer. `group` (a JSON list of the group's values, as
+    in the answer's table) narrows it to one group, e.g. ["North"]."""
+    reply = db.get(Message, message_id)
+    if reply is None or reply.role != "assistant":
+        raise not_found("Answer")
+    conv = _conversation(db, user, reply.conversation_id)  # checks it's the user's own
+    answer = reply.answer or {}
+    explanation = answer.get("explanation") or {}
+    if not reply.plan or "table" not in answer:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This answer has no rows behind it.")
+    ds = _dataset(db, user, conv.dataset_id)
+    try:
+        group_values = json.loads(group) if group else None
+        if group_values is not None and not isinstance(group_values, list):
+            raise ValueError
+    except ValueError:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "group must be a JSON list."
+        ) from None
+    try:
+        ev = find_evidence(
+            plan=reply.plan, explanation=explanation, group=group_values, profile=ds.columns,
+            parquet=require_parquet(settings, ds), dataset_id=ds.id, version=ds.version,
+            today=today,
+        )  # fmt: skip
+    except PlanError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return EvidenceOut(columns=ev.columns, rows=ev.rows, total=ev.total)

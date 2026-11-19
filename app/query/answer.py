@@ -25,6 +25,7 @@ from app.query.presentation import (
     fmt_value,
     summary_is_grounded,
 )
+from app.query.retrieval import apply_retrieval, value_hints
 
 if TYPE_CHECKING:
     from app.learning import Remembered
@@ -45,6 +46,10 @@ class Answer:
     summary_source: Literal["llm", "template", "none"] = "none"
     calls: list[LLMCall] = field(default_factory=list)
     reused: bool = False  # answered from an identical earlier question, without the model
+    # Table RAG: what retrieval did ("Matched 'zarmeen' to 'Zarmeen Khan'"), and the
+    # rows each topic filter matched (filter index -> row numbers), kept for proof.
+    retrieval_notes: list[str] = field(default_factory=list)
+    topic_rows: dict[int, list[int]] = field(default_factory=dict)
 
 
 def describe_profile(profile: list[dict[str, Any]], row_count: int) -> QueryResult:
@@ -110,7 +115,9 @@ def _summarize(
         text, call = llm.summarize(question, description, table_text(result))
     except LLMUnavailableError:
         return fallback_summary(vp, result), "template", []
-    extra: list[Any] = [vp.plan.limit, *vp.filter_values]
+    # Numbers the summary may mention besides the table (never topic row numbers).
+    shown = [v for f, v in zip(vp.plan.filters, vp.filter_values, strict=True) if f.op != "about"]
+    extra: list[Any] = [vp.plan.limit, *shown]
     if vp.date_range:
         extra += [vp.date_range.start.isoformat(), vp.date_range.last_day.isoformat()]
     if text and summary_is_grounded(text, result, question, extra):
@@ -148,6 +155,11 @@ def answer_question(
     if reused is not None:
         outcome = PlanOutcome(validated=reused)
     else:
+        try:  # real values that match words in the question, for the planner
+            hints = value_hints(question, parquet, profile)
+        except Exception:  # retrieval must never stop an answer
+            hints = ""
+        notes = "\n".join(n for n in (notes, hints) if n)
         outcome = make_plan(
             llm,
             question,
@@ -164,6 +176,19 @@ def answer_question(
         return Answer("failed", outcome.failure or "Please rephrase.", calls=outcome.calls)
 
     vp = outcome.validated
+    retrieval_notes: list[str] = []
+    topic_rows: dict[int, list[int]] = {}
+    if vp.plan.metric != "describe" and vp.plan.filters:
+        if any(f.op == "about" for f in vp.plan.filters):
+            stage("matching")
+        try:
+            found = apply_retrieval(llm, vp, parquet)
+        except LLMUnavailableError:
+            raise
+        except PlanError as exc:
+            return Answer("failed", str(exc), vp, calls=outcome.calls)
+        vp, retrieval_notes, topic_rows = found.plan, found.notes, found.topic_rows
+        outcome.calls += found.calls
     stage("querying")
     try:
         if vp.plan.metric == "describe":
@@ -193,4 +218,6 @@ def answer_question(
         source,
         outcome.calls + calls,
         reused=reused is not None,
+        retrieval_notes=retrieval_notes,
+        topic_rows=topic_rows,
     )

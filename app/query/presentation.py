@@ -32,6 +32,7 @@ _OP_WORDS = {
     "in": "is one of",
     "contains": "contains",
     "between": "is between",
+    "about": "is about",
 }
 
 
@@ -78,6 +79,8 @@ def describe_plan(vp: ValidatedPlan) -> str:
             conditions.append(f"{f.column} is {'empty' if f.op == '=' else 'not empty'}")
         elif f.op == "between":
             conditions.append(f"{f.column} is between {fmt_value(v[0])} and {fmt_value(v[1])}")
+        elif f.op == "about":  # v is the matched row numbers; describe the topic
+            conditions.append(f"{f.column} is about “{f.value}”")
         else:
             conditions.append(f"{f.column} {_OP_WORDS[f.op]} {fmt_value(v)}")
     if conditions:

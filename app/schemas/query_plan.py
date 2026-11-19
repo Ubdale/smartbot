@@ -10,7 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # "rows" lists matching rows themselves; "describe" answers "what is this data about?".
 Metric = Literal["count", "count_distinct", "sum", "avg", "min", "max", "rows", "describe"]
-FilterOp = Literal["=", "!=", ">", ">=", "<", "<=", "in", "contains", "between"]
+# "about": rows whose text is about a topic by meaning (matched by retrieval, then
+# counted exactly), e.g. {"column": "Summary", "op": "about", "value": "tax issues"}.
+FilterOp = Literal["=", "!=", ">", ">=", "<", "<=", "in", "contains", "between", "about"]
 TimeGrain = Literal["day", "week", "month", "quarter", "year"]
 ChartType = Literal["none", "bar", "line", "pie"]
 Scalar = str | int | float | bool

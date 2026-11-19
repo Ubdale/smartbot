@@ -51,6 +51,10 @@ class ExplanationOut(BaseModel):
     elapsed_ms: int
     # A caveat about the data itself, e.g. the table was read from an image by AI.
     data_note: str | None = None
+    # Table RAG: how names/topics were matched ("Matched 'zarmeen' to 'Zarmeen Khan'"),
+    # and which rows each topic filter matched (filter index -> row numbers).
+    retrieval_notes: list[str] = Field(default_factory=list)
+    topic_rows: dict[str, list[int]] = Field(default_factory=dict)
 
 
 class AnswerOut(BaseModel):
@@ -135,6 +139,14 @@ class ConversationOut(ConversationSummary):
 
 class FeedbackRequest(BaseModel):
     rating: Literal[-1, 0, 1]  # 0 clears it
+
+
+class EvidenceOut(BaseModel):
+    """The exact rows behind an answer (or one group of it)."""
+
+    columns: list[str]
+    rows: list[list[Any]]
+    total: int  # all matching rows; `rows` shows at most 500
 
 
 class FeedbackOut(BaseModel):

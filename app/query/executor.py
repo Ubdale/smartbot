@@ -155,6 +155,10 @@ def _validate_filter(f: Filter, col: ColumnInfo) -> Any:
         if kind != "text":
             raise PlanError(f"'contains' only works on text columns, not {col.name!r}.")
         return str(v)
+    if op == "about":
+        if kind != "text":
+            raise PlanError(f"'about' only works on text columns, not {col.name!r}.")
+        return str(v)  # the topic; retrieval replaces it with the matching row numbers
     if op in (">", ">=", "<", "<=") and kind not in ("number", "date", "datetime"):
         raise PlanError(f"{op!r} needs a number or date column, not {col.name!r} ({kind}).")
     return _coerce(v, kind, col.name)
@@ -283,6 +287,11 @@ def _filter_sql(f: Filter, kind: str, value: Any, params: list[Any]) -> str:
     text = kind == "text"
     if value is None:
         return f"{q} IS NULL" if f.op == "=" else f"{q} IS NOT NULL"
+    if f.op == "about":
+        if not isinstance(value, list):
+            raise PlanError(f"The topic filter on {f.column!r} wasn't matched to rows.")
+        params.append(value)
+        return "list_contains(?::BIGINT[], file_row_number)"
     if f.op == "contains":
         params.append(f"%{_escape_like(value)}%")
         return f"CAST({q} AS VARCHAR) ILIKE ? ESCAPE '\\'"
@@ -312,12 +321,20 @@ def _where(vp: ValidatedPlan, params: list[Any]) -> list[str]:
     return where
 
 
+def _source(vp: ValidatedPlan) -> str:
+    """The table: with row numbers when a topic filter selects rows by number."""
+    if any(f.op == "about" for f in vp.plan.filters):
+        return "read_parquet(?, file_row_number = true)"
+    return "read_parquet(?)"
+
+
 def _rows_sql(vp: ValidatedPlan, parquet: Path) -> tuple[str, list[Any]]:
     """metric "rows": the matching rows themselves (selected columns, filtered, capped)."""
     p = vp.plan
     params: list[Any] = [str(parquet)]
-    select = ", ".join(quote_ident(c) for c in p.columns) if p.columns else "*"
-    sql = f"SELECT {select}\nFROM read_parquet(?)"
+    star = "* EXCLUDE (file_row_number)" if "file_row_number" in _source(vp) else "*"
+    select = ", ".join(quote_ident(c) for c in p.columns) if p.columns else star
+    sql = f"SELECT {select}\nFROM {_source(vp)}"
     where = _where(vp, params)
     if where:
         sql += "\nWHERE " + "\n  AND ".join(where)
@@ -353,7 +370,7 @@ def build_sql(vp: ValidatedPlan, parquet: Path) -> tuple[str, list[Any]]:
 
     where = _where(vp, params)
 
-    sql = f"SELECT {', '.join(select)}\nFROM read_parquet(?)"
+    sql = f"SELECT {', '.join(select)}\nFROM {_source(vp)}"
     if where:
         sql += "\nWHERE " + "\n  AND ".join(where)
 
@@ -384,6 +401,7 @@ def _cache_key(dataset_id: str, version: int, vp: ValidatedPlan) -> str:
     payload = {
         "plan": vp.plan.model_dump(mode="json"),
         "range": [str(vp.date_range.start), str(vp.date_range.end)] if vp.date_range else None,
+        "values": [jsonable(v) for v in vp.filter_values],
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     return f"{dataset_id}:{version}:{digest}"
@@ -431,7 +449,7 @@ def execute_plan(
         rows=rows,
         truncated=truncated,
         sql=sql,
-        params=[jsonable(p) for p in params[1:]],  # hide the server file path
+        params=[_shown(p) for p in params[1:]],  # hide the server file path
         dimensions=vp.dimension_aliases,
         value_column=vp.metric_alias,
         elapsed_ms=elapsed,
@@ -439,6 +457,12 @@ def execute_plan(
     with _cache_lock:
         _cache[key] = result
     return result
+
+
+def _shown(param: Any) -> Any:
+    if isinstance(param, list) and len(param) > 20:
+        return f"<{len(param)} rows matched by meaning>"
+    return jsonable(param)
 
 
 def columns_from_profile(profile: list[dict[str, Any]]) -> list[ColumnInfo]:
