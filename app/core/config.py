@@ -75,6 +75,17 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr | None = None
     groq_api_key: SecretStr | None = None
 
+    # Digests (scheduled reports). Email goes out via Resend when RESEND_API_KEY is set;
+    # without it, digests still appear on the Reports page.
+    resend_api_key: SecretStr | None = None
+    # Must be on a domain verified in Resend; onboarding@resend.dev only sends to yourself.
+    digest_from_email: str = "AskData <onboarding@resend.dev>"
+    # The frontend's address, for links in emails (e.g. https://askdata.vercel.app).
+    app_url: str = ""
+    # Shared secret the hourly timer (GitHub Actions) sends to run due digests.
+    digest_cron_secret: SecretStr | None = None
+    default_timezone: str = "Asia/Karachi"
+
     # Questions per user per minute (0 = no limit). Protects free LLM quotas.
     questions_per_minute: int = Field(default=10, ge=0)
 

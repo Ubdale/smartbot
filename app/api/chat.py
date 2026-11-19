@@ -21,6 +21,7 @@ from app.api.deps import AppSettings, CurrentUser, DbSession, Today, not_found, 
 from app.core import ratelimit
 from app.core.config import Settings
 from app.core.db import get_session_factory
+from app.digests import describe_schedule, is_schedule_request, parse_schedule
 from app.documents.answer import DocumentAnswer, answer_document_question
 from app.export_formats import FORMATS, NothingToExportError
 from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
@@ -229,6 +230,8 @@ def run_ask(
     # Requests about the conversation itself, answered directly (no model call).
     if CODE_REQUEST.search(body.question) and ds.kind == "table":
         return _code_reply(db, conv, body, ds, previous, user)
+    if ds.kind == "table" and is_schedule_request(body.question):
+        return _schedule_reply(db, conv, body, previous, user, settings)
     if ds.kind == "table" and is_style_request(body.question, previous):
         return _style_reply(db, conv, body, previous, user, llm, today)
     fmt = requested_format(body.question)
@@ -411,6 +414,35 @@ FIX_REQUEST = re.compile(
     r"|the\s+(data|issues|problems)))?(\s+please)?\W*$",
     re.I,
 )
+
+
+def _schedule_reply(
+    db: Session, conv: Conversation, body: AskRequest, previous: list[tuple[Message, Message]],
+    user: User, settings: Settings,
+) -> AskResponse:  # fmt: skip
+    """'Send me this every Monday at 9': schedule the latest computed answer."""
+    from app.api.digests import DigestIn, create_digest
+
+    last = next((a for q, a in reversed(previous) if a.role == "assistant" and a.plan
+                 and (a.plan or {}).get("metric") != "describe"), None)  # fmt: skip
+    if last is None:
+        return _save_turn(
+            db, conv, body,
+            content=("Ask me a question first (for example “open tasks by person”), "
+                     "then say “send me this every Monday at 9”."),
+            status_="answered", plan=None, payload=None, calls=[], user=user,
+        )  # fmt: skip
+    s = parse_schedule(body.question)
+    digest = create_digest(db, user, DigestIn(message_id=last.id, cadence=s.cadence,
+                                              weekday=s.weekday, hour=s.hour),
+                           settings.default_timezone)  # fmt: skip
+    where = ", ".join(digest.recipients)
+    content = (f"Scheduled: “{digest.title}” {describe_schedule(digest)}, with fresh "
+               f"numbers each time, to {where}. Manage it on the Reports page.")  # fmt: skip
+    if settings.resend_api_key is None:
+        content += " (Email isn't set up yet, so for now each digest appears on Reports.)"
+    return _save_turn(db, conv, body, content=content, status_="answered", plan=None,
+                      payload=None, calls=[], user=user)  # fmt: skip
 
 
 def _last_doctor(previous: list[tuple[Message, Message]]) -> dict[str, Any] | None:

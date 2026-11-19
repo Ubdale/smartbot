@@ -3,6 +3,7 @@
 from app.core.db import Base
 from app.models.chat import Conversation, Message, UsageEvent
 from app.models.dataset import Dataset
+from app.models.digest import Digest, DigestRun
 from app.models.learning import GlossaryTerm, LearnedExample
 from app.models.team import AuditEvent, Invite
 from app.models.user import User
@@ -13,6 +14,8 @@ __all__ = [
     "Base",
     "Conversation",
     "Dataset",
+    "Digest",
+    "DigestRun",
     "GlossaryTerm",
     "Invite",
     "LearnedExample",

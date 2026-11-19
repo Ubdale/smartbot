@@ -4,7 +4,7 @@ import logging
 
 from fastapi import FastAPI
 
-from app.api import auth, chat, datasets, health, team, workspaces
+from app.api import auth, chat, datasets, digests, health, team, workspaces
 from app.core.config import get_settings
 from app.core.headers import SecurityHeadersMiddleware
 from app.core.limits import BodySizeLimitMiddleware
@@ -33,6 +33,7 @@ def create_app() -> FastAPI:
     app.include_router(workspaces.router)
     app.include_router(datasets.router)
     app.include_router(chat.router)
+    app.include_router(digests.router)
     return app
 
 

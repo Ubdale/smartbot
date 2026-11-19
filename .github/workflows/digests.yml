@@ -1,0 +1,38 @@
+# Hourly timer for scheduled digests (free). Render's free plan sleeps, so an
+# in-app scheduler can't be trusted: this wakes the server and asks it to send every
+# digest that's due.
+#
+# Setup (once): in this GitHub repo, Settings -> Secrets and variables -> Actions:
+#   - secret  DIGEST_CRON_SECRET = the same value as DIGEST_CRON_SECRET on Render
+#   - variable BACKEND_URL       = https://your-service.onrender.com (optional)
+name: Send digests
+
+on:
+  schedule:
+    - cron: "3 * * * *" # every hour, a few minutes past
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Wake the server and send due digests
+        env:
+          BACKEND_URL: ${{ vars.BACKEND_URL || 'https://smartbot-abwu.onrender.com' }}
+          SECRET: ${{ secrets.DIGEST_CRON_SECRET }}
+        run: |
+          if [ -z "$SECRET" ]; then
+            echo "DIGEST_CRON_SECRET isn't set in this repo's Actions secrets; skipping."
+            exit 0
+          fi
+          for attempt in 1 2 3 4; do
+            code=$(curl -s -o out.json -w '%{http_code}' --max-time 240 -X POST \
+              "$BACKEND_URL/internal/digests/tick" -H "X-Cron-Secret: $SECRET" || echo 000)
+            if [ "$code" = "200" ]; then cat out.json; exit 0; fi
+            echo "Attempt $attempt: HTTP $code (the server may be waking up)"
+            sleep 45
+          done
+          exit 1
