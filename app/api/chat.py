@@ -1,14 +1,23 @@
 """Ask questions about a dataset; list and read conversations."""
 
-from datetime import UTC, datetime
+import json
+import logging
+import queue
+import threading
+from collections.abc import Callable, Iterator
+from datetime import UTC, date, datetime
 from itertools import pairwise
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.datasets import require_parquet
 from app.api.deps import AppSettings, CurrentUser, DbSession, Today, not_found, workspace_scoped
+from app.core.config import Settings
+from app.core.db import get_session_factory
 from app.documents.answer import DocumentAnswer, answer_document_question
 from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
 from app.llm.factory import get_llm, get_summary_llm
@@ -24,6 +33,7 @@ from app.schemas.chat import (
 )
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+log = logging.getLogger(__name__)
 
 HISTORY_TURNS = 3
 
@@ -105,6 +115,71 @@ def ask(
     summarizer: Annotated[LLMProvider, Depends(get_summary_llm)],
     today: Today,
 ) -> AskResponse:
+    return run_ask(body, user, db, settings, llm, summarizer, today)
+
+
+@router.post("/ask/stream")
+def ask_stream(
+    body: AskRequest,
+    user: CurrentUser,
+    settings: AppSettings,
+    llm: Annotated[LLMProvider, Depends(get_llm)],
+    summarizer: Annotated[LLMProvider, Depends(get_summary_llm)],
+    today: Today,
+    sessions: Annotated[sessionmaker[Session], Depends(get_session_factory)],
+) -> StreamingResponse:
+    """Same as /ask, as server-sent events: progress stages first, then the answer.
+
+    Events: {"type": "stage", "stage": "planning"|"querying"|"summarizing"|"searching"|
+    "reading"}, then {"type": "done", "response": AskResponse} or {"type": "error",
+    "status": int, "detail": str}.
+    """
+    events: queue.Queue[dict[str, Any] | None] = queue.Queue()
+    user_id = user.id
+
+    def work() -> None:
+        with sessions() as db:  # its own session: it outlives the request's
+            try:
+                worker_user = db.get(User, user_id)
+                if worker_user is None:
+                    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+                response = run_ask(
+                    body, worker_user, db, settings, llm, summarizer, today,
+                    on_stage=lambda stage: events.put({"type": "stage", "stage": stage}),
+                )  # fmt: skip
+                events.put({"type": "done", "response": response.model_dump(mode="json")})
+            except HTTPException as exc:
+                events.put({"type": "error", "status": exc.status_code, "detail": exc.detail})
+            except Exception:
+                log.exception("streamed ask failed")
+                events.put({"type": "error", "status": 500, "detail": "Something went wrong."})
+            finally:
+                events.put(None)
+
+    threading.Thread(target=work, daemon=True).start()
+
+    def stream() -> Iterator[str]:
+        yield ": start\n\n"  # flush headers through proxies right away
+        while (event := events.get()) is not None:
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
+
+
+def run_ask(
+    body: AskRequest,
+    user: User,
+    db: Session,
+    settings: Settings,
+    llm: LLMProvider,
+    summarizer: LLMProvider,
+    today: date,
+    on_stage: Callable[[str], None] | None = None,
+) -> AskResponse:
     if body.conversation_id:
         conv = _conversation(db, user, body.conversation_id)
         ds = _dataset(db, user, conv.dataset_id)
@@ -135,21 +210,28 @@ def ask(
             doc_turns = [
                 (q.content, a.content)
                 for q, a in previous
-                if q.role == "user" and a.role == "assistant" and a.status == "answered"
+                if q.role == "user" and a.role == "assistant" and a.status != "failed"
             ]
             doc = answer_document_question(
-                llm, body.question, parquet=parquet, history=doc_turns[-2:]
+                llm,
+                body.question,
+                parquet=parquet,
+                history=doc_turns[-2:],
+                on_stage=on_stage,
             )
             content, status_, plan, payload, calls = (
                 doc.text, doc.status, None, _document_payload(doc), doc.calls
             )  # fmt: skip
         else:
             # Recent answered turns let follow-ups ("now split by city") modify the plan.
-            turns = [
-                (q.content, a.plan)
-                for q, a in previous
-                if q.role == "user" and a.role == "assistant" and a.plan
-            ]
+            turns: list[tuple[str, dict[str, Any]]] = []
+            for q, a in previous:
+                if q.role != "user" or a.role != "assistant":
+                    continue
+                if a.plan:
+                    turns.append((q.content, a.plan))
+                elif a.status == "clarification":  # so "Yes" means yes to *this*
+                    turns.append((q.content, {"clarification_needed": a.content}))
             result = answer_question(
                 llm,
                 body.question,
@@ -162,6 +244,7 @@ def ask(
                 history=history_messages(turns[-HISTORY_TURNS:]),
                 today=today,
                 summarizer=summarizer,
+                on_stage=on_stage,
             )
             content, status_, payload, calls = (
                 result.summary, result.status, _answer_payload(result, ds), result.calls

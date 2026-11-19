@@ -365,3 +365,27 @@ def test_llm_misconfiguration_is_a_clear_503(client: Any, app: Any, settings: Se
     )
     assert resp.status_code == 503
     assert "doesn't look like a gemini model" in resp.json()["detail"]
+
+
+def test_summary_provider_choice() -> None:
+    from app.llm.factory import NoSummaries, get_summary_llm
+
+    planner = make_provider(Settings(_env_file=None))
+    none = get_summary_llm(Settings(_env_file=None, llm_summary_provider="none"), planner)
+    assert isinstance(none, NoSummaries)
+    with pytest.raises(LLMUnavailableError):
+        none.summarize("q", "d", "t")  # -> the instant code-written summary is used
+    groq = get_summary_llm(
+        Settings(_env_file=None, llm_summary_provider="groq", groq_api_key="g"), planner
+    )
+    assert isinstance(groq, GroqProvider)
+    assert groq.model == "openai/gpt-oss-20b"
+    same = get_summary_llm(Settings(_env_file=None), planner)
+    assert same is planner
+
+
+def test_clarification_reply_carries_the_question() -> None:
+    from app.query.planner import history_messages
+
+    msgs = history_messages([("whats in this file?", {"clarification_needed": "Columns?"})])
+    assert msgs[1].content == '{"clarification_needed":"Columns?"}'

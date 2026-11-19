@@ -1,5 +1,6 @@
 """The full ask flow: plan -> execute -> chart -> summary. No database writes here."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -119,8 +120,11 @@ def answer_question(
     history: list[ChatMessage],
     today: date,
     summarizer: LLMProvider | None = None,
+    on_stage: Callable[[str], None] | None = None,
 ) -> Answer:
     """Raises LLMUnavailableError if the model can't be reached during planning."""
+    stage = on_stage or (lambda _s: None)
+    stage("planning")
     outcome = make_plan(
         llm,
         question,
@@ -136,6 +140,7 @@ def answer_question(
         return Answer("failed", outcome.failure or "Please rephrase.", calls=outcome.calls)
 
     vp = outcome.validated
+    stage("querying")
     try:
         if vp.plan.metric == "describe":
             result = describe_profile(profile, row_count)
@@ -145,6 +150,7 @@ def answer_question(
         return Answer("failed", f"{exc} Try a narrower question.", vp, calls=outcome.calls)
 
     description = describe_plan(vp)
+    stage("summarizing")
     summary, source, calls = _summarize(summarizer or llm, question, vp, result, description)
     return Answer(
         "answered",

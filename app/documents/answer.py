@@ -1,5 +1,6 @@
 """Question about a document -> passages found by search -> cited, checked answer."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -47,8 +48,11 @@ def answer_document_question(
     *,
     parquet: Path,
     history: list[tuple[str, str]],
+    on_stage: Callable[[str], None] | None = None,
 ) -> DocumentAnswer:
     """Raises LLMUnavailableError if the model can't be reached."""
+    stage = on_stage or (lambda _s: None)
+    stage("searching")
     passages = load_passages(parquet)
     # Follow-ups ("what about 2024?") search with the previous question's words too.
     query = " ".join([q for q, _ in history[-1:]] + [question])
@@ -56,6 +60,7 @@ def answer_document_question(
     if not found:
         return DocumentAnswer("failed", NOT_FOUND, [], [], grounded=True)
 
+    stage("reading")
     numbered = [(i, p.page, p.text) for i, p in enumerate(found, start=1)]
     answer, call = llm.answer_from_passages(question, numbered, history_text(history))
     if not answer.found or not answer.text:

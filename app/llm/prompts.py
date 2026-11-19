@@ -34,8 +34,11 @@ Rules:
 - If the question is a follow-up ("now split by city", "only for 2025", "what about X"),
   copy the previous plan and change only what was asked: keep its metric, groups,
   filters and date_phrase. "Split by X" ADDS X to group_by.
-- If the question can't be answered from this table, or is truly ambiguous, set
-  clarification_needed to a short question for the user and leave the rest default.
+- Prefer answering. Never ask back about what the file contains: use "describe". For vague
+  requests ("show me the data", "all of it") use "rows". Only if the question is about
+  something this table can't answer, set clarification_needed to a short question.
+- If you asked a clarifying question and the user replies ("yes", "the formulas"), answer
+  the original question using that reply. Never ask the same question twice.
 Reply with the JSON plan only."""
 
 EXAMPLE_TABLE = """Table "orders" (12,400 rows). Columns:

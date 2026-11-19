@@ -178,11 +178,37 @@ def get_llm(settings: Annotated[Settings, Depends(get_settings)]) -> LLMProvider
     return _build(settings, summary=False)
 
 
+class NoSummaries(LLMProvider):
+    """LLM_SUMMARY_PROVIDER=none: instantly use the code-written summary."""
+
+    name, model = "none", "none"
+
+    def complete(
+        self,
+        messages: list[ChatMessage],
+        *,
+        json_schema: dict[str, Any] | None = None,
+        max_tokens: int = 512,
+    ) -> Completion:
+        raise LLMUnavailableError("Summaries are written by code (LLM_SUMMARY_PROVIDER=none).")
+
+
 def get_summary_llm(
     settings: Annotated[Settings, Depends(get_settings)],
     planner: Annotated[LLMProvider, Depends(get_llm)],
 ) -> LLMProvider:
     """The model that writes summaries; the planning model unless a separate one is set."""
+    choice = settings.llm_summary_provider
+    if choice == "none":
+        return NoSummaries()
+    if choice in ("groq", "gemini") and choice != settings.llm_provider:
+        key = ("summary-provider", choice)
+        if key not in _cached:
+            try:
+                _cached[key] = _single(settings, choice, summary=True, patient=False)
+            except LLMUnavailableError as exc:
+                raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+        return _cached[key]
     if settings.summary_model_name == settings.model_name and not settings.llm_fallback_provider:
         return planner
     return _build(settings, summary=True)

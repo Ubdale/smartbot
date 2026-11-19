@@ -370,3 +370,47 @@ def test_rows_cannot_be_grouped(
     use_llm(app, FakeLLM([bad, bad]))
     reply = ask(client, acct, "list by region", dataset_id=dataset_id).json()["reply"]
     assert reply["status"] == "failed"
+
+
+# --- streaming progress ------------------------------------------------------------------
+
+
+def stream_events(client: TestClient, acct: Account, **body: str) -> list[dict[str, Any]]:
+    import json as _json
+
+    with client.stream("POST", "/chat/ask/stream", headers=acct.headers, json=body) as resp:
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        lines = [ln for ln in resp.iter_lines() if ln.startswith("data: ")]
+    return [_json.loads(ln.removeprefix("data: ")) for ln in lines]
+
+
+def test_stream_sends_stages_then_the_answer(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    use_llm(app, FakeLLM([REVENUE_BY_REGION], summary=first_row_summary))
+    events = stream_events(client, acct, question="Revenue by region", dataset_id=dataset_id)
+    assert [e["stage"] for e in events if e["type"] == "stage"] == [
+        "planning", "querying", "summarizing"
+    ]  # fmt: skip
+    done = events[-1]
+    assert done["type"] == "done"
+    assert done["response"]["reply"]["answer"]["table"]["columns"] == ["region", "sum_revenue"]
+    # stored like a normal answer
+    conv_id = done["response"]["conversation_id"]
+    conv = client.get(f"/chat/conversations/{conv_id}", headers=acct.headers).json()
+    assert len(conv["messages"]) == 2
+
+
+def test_stream_reports_errors_as_events(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    use_llm(app, FakeLLM(unavailable=True))
+    events = stream_events(client, acct, question="anything", dataset_id=dataset_id)
+    assert events[-1] == {
+        "type": "error",
+        "status": 503,
+        "detail": "The fake model is switched off.",
+    }
+    other = stream_events(client, acct, question="x", dataset_id="nope")
+    assert other[-1]["status"] == 404

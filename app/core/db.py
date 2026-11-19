@@ -40,6 +40,11 @@ engine = make_engine(get_settings().database_url)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
+def get_session_factory() -> sessionmaker[Session]:
+    """For work that outlives the request's own session (streamed answers)."""
+    return SessionLocal
+
+
 def get_db() -> Iterator[Session]:
     db = SessionLocal()
     try:

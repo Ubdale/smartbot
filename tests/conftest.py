@@ -17,7 +17,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings, get_settings
-from app.core.db import get_db, make_engine
+from app.core.db import get_db, get_session_factory, make_engine
 from app.main import create_app
 from app.models import Base
 
@@ -64,6 +64,7 @@ def app(settings: Settings, session_factory: sessionmaker[Session]) -> FastAPI:
     application = create_app()
     application.dependency_overrides[get_settings] = lambda: settings
     application.dependency_overrides[get_db] = _get_db
+    application.dependency_overrides[get_session_factory] = lambda: session_factory
     return application
 
 

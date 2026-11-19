@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     llm_summary_model: str | None = None  # empty = DEFAULT_SUMMARY_MODELS, else llm_model
     # Used when the main provider fails or hits its free-tier limit (e.g. gemini -> groq).
     llm_fallback_provider: LLMProviderName | None = None
+    # Who writes the 2-3 sentence summary: "same" (the main model), "groq", "gemini", or
+    # "none" (instant summary written by code). With a slow self-hosted model, "none" keeps
+    # it fast: summaries also push the planning prompt out of a CPU server's cache.
+    llm_summary_provider: Literal["same", "groq", "gemini", "none"] = "same"
     # Reads tables from images and scanned PDFs. Empty = gemini when GEMINI_API_KEY is set.
     vision_provider: VisionProviderName | None = None
     vision_model: str | None = None

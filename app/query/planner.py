@@ -48,7 +48,11 @@ def schema_text(name: str, row_count: int, profile: list[dict[str, Any]]) -> str
 
 
 def history_messages(turns: list[tuple[str, dict[str, Any]]]) -> list[ChatMessage]:
-    """Previous (question, plan) pairs, so follow-ups can modify the last plan."""
+    """Previous turns as (question, plan), so follow-ups can modify the last plan.
+
+    A clarifying question the model asked is stored as {"clarification_needed": ...}, so
+    a reply like "Yes" or "the formulas" is read together with what was asked.
+    """
     msgs: list[ChatMessage] = []
     for question, plan in turns:
         msgs.append(ChatMessage("user", f"Question: {question}"))
