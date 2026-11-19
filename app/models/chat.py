@@ -45,6 +45,8 @@ class Message(IdMixin, TimestampMixin, Base):
     plan: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     # Table, chart and explanation exactly as shown, so history renders without re-running.
     answer: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # The user's verdict on an assistant answer: 1 = helpful, -1 = wrong.
+    rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
 

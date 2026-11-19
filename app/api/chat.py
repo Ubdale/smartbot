@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app import learning
 from app.api.datasets import require_parquet
 from app.api.deps import AppSettings, CurrentUser, DbSession, Today, not_found, workspace_scoped
 from app.core.config import Settings
@@ -29,6 +30,8 @@ from app.schemas.chat import (
     AskResponse,
     ConversationOut,
     ConversationSummary,
+    FeedbackOut,
+    FeedbackRequest,
     MessageOut,
 )
 
@@ -67,6 +70,13 @@ AI_VISION_NOTE = (
 
 
 def _answer_payload(a: Answer, ds: Dataset) -> dict[str, Any] | None:
+    payload = _table_payload(a, ds)
+    if payload is not None:
+        payload["reused"] = a.reused
+    return payload
+
+
+def _table_payload(a: Answer, ds: Dataset) -> dict[str, Any] | None:
     if a.status != "answered" or a.result is None or a.validated is None:
         return None
     r, vp = a.result, a.validated
@@ -199,6 +209,27 @@ def run_ask(
     parquet = require_parquet(settings, ds)
     previous = list(pairwise(conv.messages)) if body.conversation_id else []
 
+    definition = learning.parse_definition(body.question)
+    if definition is not None:
+        # "sales means revenue": remember it for this file. No model needed.
+        learning.remember_term(
+            db, workspace_id=user.workspace_id, dataset_id=ds.id, user_id=user.id, d=definition
+        )
+        return _save_turn(
+            db,
+            conv,
+            body,
+            content=(
+                f"Got it. From now on, “{definition.term}” means "
+                f"{definition.meaning} for “{ds.name}”."
+            ),
+            status_="answered",
+            plan=None,
+            payload=None,
+            calls=[],
+            user=user,
+        )
+
     content: str
     status_: str
     plan: dict[str, Any] | None
@@ -232,6 +263,18 @@ def run_ask(
                     turns.append((q.content, a.plan))
                 elif a.status == "clarification":  # so "Yes" means yes to *this*
                     turns.append((q.content, {"clarification_needed": a.content}))
+            # What AskData has learned about this file: helpful past answers to similar
+            # questions (as examples), and the team's words for things.
+            examples = learning.similar_examples(
+                db, workspace_id=user.workspace_id, ds=ds, question=body.question, today=today
+            )
+            remembered = (
+                None
+                if turns  # follow-ups depend on context: never reuse those
+                else learning.remembered_answer(
+                    db, workspace_id=user.workspace_id, dataset_id=ds.id, question=body.question
+                )
+            )
             result = answer_question(
                 llm,
                 body.question,
@@ -241,10 +284,12 @@ def run_ask(
                 row_count=ds.row_count,
                 profile=ds.columns,
                 parquet=parquet,
-                history=history_messages(turns[-HISTORY_TURNS:]),
+                history=history_messages(examples + turns[-HISTORY_TURNS:]),
                 today=today,
                 summarizer=summarizer,
                 on_stage=on_stage,
+                notes=learning.glossary_notes(db, workspace_id=user.workspace_id, dataset_id=ds.id),
+                remembered=remembered,
             )
             content, status_, payload, calls = (
                 result.summary, result.status, _answer_payload(result, ds), result.calls
@@ -253,6 +298,24 @@ def run_ask(
     except LLMUnavailableError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
+    return _save_turn(
+        db, conv, body, content=content, status_=status_, plan=plan, payload=payload,
+        calls=calls, user=user,
+    )  # fmt: skip
+
+
+def _save_turn(
+    db: Session,
+    conv: Conversation,
+    body: AskRequest,
+    *,
+    content: str,
+    status_: str,
+    plan: dict[str, Any] | None,
+    payload: dict[str, Any] | None,
+    calls: list[LLMCall],
+    user: User,
+) -> AskResponse:
     now = datetime.now(UTC)
     position = len(conv.messages) if body.conversation_id else 0
     question = Message(role="user", content=body.question, position=position, created_at=now)
@@ -309,3 +372,25 @@ def get_conversation(conversation_id: str, user: CurrentUser, db: DbSession) -> 
 def delete_conversation(conversation_id: str, user: CurrentUser, db: DbSession) -> None:
     db.delete(_conversation(db, user, conversation_id))
     db.commit()
+
+
+@router.post("/messages/{message_id}/feedback", response_model=FeedbackOut)
+def give_feedback(
+    message_id: str, body: FeedbackRequest, user: CurrentUser, db: DbSession
+) -> FeedbackOut:
+    """👍 teaches AskData this answer was right (it becomes an example for similar
+    questions); 👎 makes sure it's never reused or learned from."""
+    reply = db.get(Message, message_id)
+    if reply is None or reply.role != "assistant":
+        raise not_found("Message")
+    conv = _conversation(db, user, reply.conversation_id)  # also checks ownership
+    question = next((m for m in conv.messages if m.position == reply.position - 1), None)
+    reply.rating = body.rating or None
+    if question is not None:
+        learning.learn_from_rating(db, reply=reply, question=question, conv=conv, user_id=user.id)
+    db.commit()
+    return FeedbackOut(
+        message_id=reply.id,
+        rating=reply.rating,
+        learned=reply.rating == 1 and reply.plan is not None,
+    )

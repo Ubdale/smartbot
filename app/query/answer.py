@@ -4,11 +4,19 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from app.llm.base import ChatMessage, LLMCall, LLMProvider, LLMUnavailableError
-from app.query.executor import QueryResult, QueryTimeoutError, ValidatedPlan, execute_plan
-from app.query.planner import make_plan
+from app.query.executor import (
+    PlanError,
+    QueryResult,
+    QueryTimeoutError,
+    ValidatedPlan,
+    columns_from_profile,
+    execute_plan,
+    validate_plan,
+)
+from app.query.planner import PlanOutcome, make_plan
 from app.query.presentation import (
     ChartSpec,
     choose_chart,
@@ -17,6 +25,9 @@ from app.query.presentation import (
     fmt_value,
     summary_is_grounded,
 )
+
+if TYPE_CHECKING:
+    from app.learning import Remembered
 
 SUMMARY_ROWS = 25
 
@@ -33,6 +44,7 @@ class Answer:
     description: str | None = None
     summary_source: Literal["llm", "template", "none"] = "none"
     calls: list[LLMCall] = field(default_factory=list)
+    reused: bool = False  # answered from an identical earlier question, without the model
 
 
 def describe_profile(profile: list[dict[str, Any]], row_count: int) -> QueryResult:
@@ -121,19 +133,31 @@ def answer_question(
     today: date,
     summarizer: LLMProvider | None = None,
     on_stage: Callable[[str], None] | None = None,
+    notes: str = "",
+    remembered: "Remembered | None" = None,
 ) -> Answer:
     """Raises LLMUnavailableError if the model can't be reached during planning."""
     stage = on_stage or (lambda _s: None)
     stage("planning")
-    outcome = make_plan(
-        llm,
-        question,
-        dataset_name=dataset_name,
-        row_count=row_count,
-        profile=profile,
-        history=history,
-        today=today,
-    )
+    reused = None
+    if remembered is not None:  # same opening question asked before: skip the model
+        try:
+            reused = validate_plan(remembered.plan, columns_from_profile(profile), today)
+        except PlanError:
+            reused = None
+    if reused is not None:
+        outcome = PlanOutcome(validated=reused)
+    else:
+        outcome = make_plan(
+            llm,
+            question,
+            dataset_name=dataset_name,
+            row_count=row_count,
+            profile=profile,
+            history=history,
+            today=today,
+            notes=notes,
+        )
     if outcome.clarification:
         return Answer("clarification", outcome.clarification, calls=outcome.calls)
     if outcome.validated is None:
@@ -151,7 +175,14 @@ def answer_question(
 
     description = describe_plan(vp)
     stage("summarizing")
-    summary, source, calls = _summarize(summarizer or llm, question, vp, result, description)
+    source: Literal["llm", "template"]
+    calls: list[LLMCall]
+    if remembered is not None and reused is not None and remembered.rows == result.rows:
+        # Same plan, same numbers: the earlier summary still holds. No model call at all.
+        source = "llm" if remembered.summary_source == "llm" else "template"
+        summary, calls = remembered.summary, []
+    else:
+        summary, source, calls = _summarize(summarizer or llm, question, vp, result, description)
     return Answer(
         "answered",
         summary,
@@ -161,4 +192,5 @@ def answer_question(
         description,
         source,
         outcome.calls + calls,
+        reused=reused is not None,
     )

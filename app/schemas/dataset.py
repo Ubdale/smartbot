@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.connectors.profiling import ColumnKind
 
@@ -47,3 +47,17 @@ class PreviewOut(BaseModel):
     columns: list[str]
     rows: list[list[Any]]
     row_count: int  # total rows in the dataset, not just this preview
+
+
+class GlossaryTermIn(BaseModel):
+    term: str = Field(min_length=1, max_length=100)
+    meaning: str = Field(min_length=1, max_length=300)
+
+
+class GlossaryTermOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    term: str
+    meaning: str
+    created_at: datetime

@@ -3,7 +3,18 @@
 from app.core.db import Base
 from app.models.chat import Conversation, Message, UsageEvent
 from app.models.dataset import Dataset
+from app.models.learning import GlossaryTerm, LearnedExample
 from app.models.user import User
 from app.models.workspace import Workspace
 
-__all__ = ["Base", "Conversation", "Dataset", "Message", "UsageEvent", "User", "Workspace"]
+__all__ = [
+    "Base",
+    "Conversation",
+    "Dataset",
+    "GlossaryTerm",
+    "LearnedExample",
+    "Message",
+    "UsageEvent",
+    "User",
+    "Workspace",
+]

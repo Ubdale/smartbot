@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
+from app import learning
 from app.api.deps import AppSettings, CurrentUser, DbSession, not_found, workspace_scoped
 from app.connectors.csv_xlsx import (
     IMAGE_MIME,
@@ -22,8 +23,15 @@ from app.core.config import Settings
 from app.documents.ingest import DOCUMENT_FORMATS, ingest_document
 from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
 from app.llm.factory import make_vision_provider
-from app.models import Dataset, UsageEvent, User
-from app.schemas.dataset import DatasetOut, DatasetSummary, PreviewOut, UploadOut
+from app.models import Dataset, GlossaryTerm, UsageEvent, User
+from app.schemas.dataset import (
+    DatasetOut,
+    DatasetSummary,
+    GlossaryTermIn,
+    GlossaryTermOut,
+    PreviewOut,
+    UploadOut,
+)
 from app.storage import PARQUET_NAME, DatasetStorage, StorageError, get_storage
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
@@ -259,3 +267,47 @@ def delete_dataset(
     db.delete(ds)
     db.commit()
     _storage(settings).delete(ds.workspace_id, ds.id)
+
+
+# --- the team's vocabulary for a file ("sales" means revenue) ---------------------------
+
+
+@router.get("/{dataset_id}/glossary", response_model=list[GlossaryTermOut])
+def list_glossary(dataset_id: str, user: CurrentUser, db: DbSession) -> list[GlossaryTerm]:
+    ds = _get_dataset(db, user, dataset_id)
+    stmt = select(GlossaryTerm).where(
+        GlossaryTerm.workspace_id == user.workspace_id, GlossaryTerm.dataset_id == ds.id
+    )
+    return list(db.scalars(stmt.order_by(GlossaryTerm.term)))
+
+
+@router.post("/{dataset_id}/glossary", response_model=list[GlossaryTermOut])
+def add_glossary_term(
+    dataset_id: str, body: GlossaryTermIn, user: CurrentUser, db: DbSession
+) -> list[GlossaryTerm]:
+    ds = _get_dataset(db, user, dataset_id)
+    learning.remember_term(
+        db,
+        workspace_id=user.workspace_id,
+        dataset_id=ds.id,
+        user_id=user.id,
+        d=learning.Definition(body.term.strip(), body.meaning.strip()),
+    )
+    db.commit()
+    return list_glossary(dataset_id, user, db)
+
+
+@router.delete("/{dataset_id}/glossary/{term_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_glossary_term(dataset_id: str, term_id: str, user: CurrentUser, db: DbSession) -> None:
+    ds = _get_dataset(db, user, dataset_id)
+    term = db.scalar(
+        select(GlossaryTerm).where(
+            GlossaryTerm.id == term_id,
+            GlossaryTerm.workspace_id == user.workspace_id,
+            GlossaryTerm.dataset_id == ds.id,
+        )
+    )
+    if term is None:
+        raise not_found("Term")
+    db.delete(term)
+    db.commit()

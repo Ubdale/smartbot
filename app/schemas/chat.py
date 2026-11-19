@@ -61,6 +61,7 @@ class AnswerOut(BaseModel):
     chart: ChartOut | None
     explanation: ExplanationOut
     summary_source: Literal["llm", "template"]
+    reused: bool = False  # answered instantly from an identical earlier question
 
 
 class SourceOut(BaseModel):
@@ -86,6 +87,7 @@ class MessageOut(BaseModel):
     content: str
     status: Literal["answered", "clarification", "failed"] | None
     answer: DocumentAnswerOut | AnswerOut | None
+    rating: int | None = None  # 1 helpful, -1 wrong
     created_at: datetime
 
 
@@ -107,3 +109,13 @@ class ConversationSummary(BaseModel):
 
 class ConversationOut(ConversationSummary):
     messages: list[MessageOut]
+
+
+class FeedbackRequest(BaseModel):
+    rating: Literal[-1, 0, 1]  # 0 clears it
+
+
+class FeedbackOut(BaseModel):
+    message_id: str
+    rating: int | None
+    learned: bool  # saved as an example future questions can learn from

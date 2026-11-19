@@ -69,8 +69,12 @@ def make_plan(
     profile: list[dict[str, Any]],
     history: list[ChatMessage],
     today: date,
+    notes: str = "",
 ) -> PlanOutcome:
+    """`notes`: extra lines for the table description (e.g. the team's vocabulary)."""
     schema = schema_text(dataset_name, row_count, profile)
+    if notes:
+        schema += "\n" + notes
     columns = columns_from_profile(profile)
     outcome = PlanOutcome()
     feedback: tuple[str, str] | None = None
