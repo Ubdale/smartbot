@@ -28,6 +28,8 @@ dependencies = [
     "python-docx>=1.1",
     "python-calamine>=0.3",
     "fpdf2>=2.8",
+    "matplotlib>=3.11.2",
+    "python-pptx>=1.0.2",
 ]
 
 [dependency-groups]
@@ -83,3 +85,7 @@ files = ["app", "tests", "scripts", "evals", "alembic/env.py"]
 [[tool.mypy.overrides]]
 module = ["alembic.*", "xlwt", "pypdfium2"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["app.export_formats"]
+disallow_untyped_calls = false  # python-pptx ships partial type hints

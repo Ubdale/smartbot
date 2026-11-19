@@ -1,10 +1,12 @@
 """A one-page-or-more PDF report of an answer: title, summary, bar chart, table."""
 
+import io
 from datetime import date, datetime
 from typing import Any
 
 from fpdf import FPDF
 
+from app.charts import render_chart_png
 from app.exporting import _pretty, answer_title, is_id_like, summable_columns
 from app.styling import ExportStyle, apply_style, color
 
@@ -13,7 +15,6 @@ BAND = (238, 242, 255)
 INK = (24, 24, 27)
 MUTED = (113, 113, 122)
 MAX_ROWS = 200
-MAX_BARS = 15
 
 # The built-in PDF fonts only cover Latin-1: map common typography, replace the rest.
 _ASCII = str.maketrans(
@@ -112,27 +113,17 @@ def build_answer_pdf(
         pdf.multi_cell(width, 4, _t(explanation["data_note"]))
     pdf.ln(4)
 
-    # A simple horizontal bar chart for grouped answers.
-    if chart and rows and chart.get("x") in columns and chart.get("y") in columns:
-        xi, yi = columns.index(chart["x"]), columns.index(chart["y"])
-        bars = [(r[xi], r[yi]) for r in rows if isinstance(r[yi], int | float)][:MAX_BARS]
-        top = max((abs(float(v)) for _, v in bars), default=0.0)
-        if bars and top > 0:
-            label_w, value_w = width * 0.3, 28.0
-            bar_area = width - label_w - value_w
-            pdf.set_font("Helvetica", size=8)
-            for label, value in bars:
-                y = pdf.get_y()
-                pdf.set_text_color(*INK)
-                pdf.cell(label_w, 5, _t(label)[:40], align="R")
-                pdf.set_fill_color(*BRAND)
-                bar = max(bar_area * abs(float(value)) / top - 4, 0.5)
-                pdf.rect(pdf.l_margin + label_w + 2, y + 1, bar, 3, style="F")
-                pdf.set_x(pdf.l_margin + label_w + bar_area)
-                pdf.cell(
-                    value_w, 5, _fmt(value, chart["y"], decimals), new_x="LMARGIN", new_y="NEXT"
-                )
-            pdf.ln(4)
+    # The chart (bar, line or pie), drawn by code from the original answer.
+    png = render_chart_png(
+        chart, table.get("columns", []), all_rows,
+        y_label=_pretty(chart["y"]) if chart else "",
+    )  # fmt: skip
+    if png:
+        chart_h = width * 4.6 / 9.0
+        if pdf.get_y() + chart_h > pdf.h - 20:
+            pdf.add_page()
+        pdf.image(io.BytesIO(png), x=pdf.l_margin, w=width)
+        pdf.ln(4)
 
     # The table: widths follow the content, long text is cut to fit.
     if columns:

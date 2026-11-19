@@ -22,11 +22,10 @@ from app.core import ratelimit
 from app.core.config import Settings
 from app.core.db import get_session_factory
 from app.documents.answer import DocumentAnswer, answer_document_question
-from app.exporting import build_answer_workbook
+from app.export_formats import FORMATS, NothingToExportError
 from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
 from app.llm.factory import get_llm, get_summary_llm
 from app.models import Conversation, Dataset, Message, UsageEvent, User
-from app.pdf_report import build_answer_pdf
 from app.query.answer import Answer, answer_question
 from app.query.codegen import pandas_code
 from app.query.planner import history_messages
@@ -222,15 +221,15 @@ def run_ask(
         return _code_reply(db, conv, body, ds, previous, user)
     if ds.kind == "table" and is_style_request(body.question, previous):
         return _style_reply(db, conv, body, previous, user, llm, today)
-    if EXCEL_REQUEST.search(body.question) and ds.kind == "table":
-        return _excel_reply(db, conv, body, previous, user)
-    if EXPORT_REQUEST.search(body.question):
+    fmt = requested_format(body.question)
+    if fmt is not None and ds.kind == "table":
+        return _file_reply(db, conv, body, previous, user, fmt)
+    if EXPORT_REQUEST.search(body.question) and ds.kind != "table":
         return _save_turn(
             db, conv, body,
             content=(
-                "You can download any answer: use the ⬇ CSV button under its table and "
-                "⬇ PNG under its chart. Ask for “Python code” to get code that "
-                "recreates the latest answer."
+                "Downloads (Excel, PDF, Word, PowerPoint, CSV) work for answers from tables "
+                "and spreadsheets. For this document, use the copy button on the answer."
             ),
             status_="answered", plan=None, payload=None, calls=[], user=user,
         )  # fmt: skip
@@ -334,10 +333,48 @@ CODE_REQUEST = re.compile(
     r"\b(python|pandas|sql|script|jupyter|notebook)\b|\b(the|this|some|write|in|give)\s+code\b",
     re.I,
 )
-EXPORT_REQUEST = re.compile(r"\b(download|export)\b", re.I)
+EXPORT_REQUEST = re.compile(r"\b(download|export|save|convert)\b", re.I)
+# Which file the user wants. Unmistakable names count on their own; everyday words
+# ("slides", "image", "chart") only together with an export-ish verb.
+_FORMAT_NAMES = [
+    ("pdf", re.compile(r"\bpdf\b", re.I)),
+    ("pptx", re.compile(r"\b(power\s?point|pptx?|ppt)\b", re.I)),
+    ("docx", re.compile(r"\b(docx?|ms\s+word|word\s+(doc|document|file|report))\b", re.I)),
+    ("csv", re.compile(r"\bcsv\b", re.I)),
+    ("xlsx", re.compile(r"\b(excel|xlsx|xls)\b", re.I)),
+    ("png", re.compile(r"\b(png|jpe?g)\b", re.I)),
+]
+_FORMAT_WORDS = [
+    ("pptx", re.compile(r"\b(slides?|slide\s?deck|deck|presentation)\b", re.I)),
+    ("docx", re.compile(r"\b(in|to|as|into)\s+word\b|\bword\b", re.I)),
+    ("xlsx", re.compile(r"\b(spreadsheet|workbook|sheet)\b", re.I)),
+    ("pdf", re.compile(r"\breport\b", re.I)),
+    ("png", re.compile(r"\b(image|picture|photo|chart|graph)\b", re.I)),
+]
+_EXPORT_VERB = re.compile(
+    r"\b(download|export|save|convert|turn|make|create|give|send|get|generate|build|"
+    r"as\s+an?|into\s+an?|to\s+an?)\b",
+    re.I,
+)
 
 
-EXCEL_REQUEST = re.compile(r"\b(excel|xlsx|spreadsheet|workbook)\b", re.I)
+def requested_format(question: str) -> str | None:
+    """The file format asked for, or None when this isn't a request for a file."""
+    for fmt, pattern in _FORMAT_NAMES:
+        if pattern.search(question):
+            return fmt
+    if not _EXPORT_VERB.search(question):
+        return None
+    for fmt, pattern in _FORMAT_WORDS:
+        if pattern.search(question):
+            return fmt
+    return "xlsx" if EXPORT_REQUEST.search(question) else None
+
+
+FORMAT_NAMES = {"xlsx": "Excel workbook", "pdf": "PDF report", "docx": "Word report",
+                "pptx": "PowerPoint deck", "csv": "CSV file", "png": "chart image"}  # fmt: skip
+
+
 # Clearly about how the export looks.
 STYLE_REQUEST = re.compile(
     r"\b(highlight|bold|shade)\w*\b"
@@ -409,12 +446,16 @@ def _style_reply(
         )  # fmt: skip
     except LLMUnavailableError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-    content = f"Done. Your Excel now has: {describe_style(style)}."
+    fmt = requested_format(body.question)
+    if fmt is None and file is not None and (file.answer or {}).get("message_id") == answer.id:
+        fmt = (file.answer or {}).get("format")
+    fmt = fmt if fmt in FORMAT_NAMES and fmt != "png" else "xlsx"
+    content = f"Done. Your {FORMAT_NAMES[fmt]} now has: {describe_style(style)}."
     if notes:
         content += " Note: " + "; ".join(notes) + "."
     return _save_turn(
         db, conv, body, content=content, status_="answered", plan=None,
-        payload={"type": "file", "format": "xlsx", "message_id": answer.id,
+        payload={"type": "file", "format": fmt, "message_id": answer.id,
                  "label": question.content[:120],
                  "style": style.model_dump(mode="json", exclude_defaults=True)},
         calls=[call], user=user,
@@ -431,38 +472,54 @@ def _last_table_answer(
     return None
 
 
-def _excel_reply(
+def _file_reply(
     db: Session,
     conv: Conversation,
     body: AskRequest,
     previous: list[tuple[Message, Message]],
     user: User,
+    fmt: str,
 ) -> AskResponse:
-    """A styled Excel download of the latest table answer (no model call)."""
+    """A download of the latest table answer in the format asked for (no model call)."""
     last = _last_table_answer(previous)
     if last is None:
         return _save_turn(
             db, conv, body,
             content=(
                 "Ask me for the data first (for example \u201ctasks assigned to Sara\u201d), "
-                "then ask for Excel and I'll give you a formatted workbook of that answer."
+                f"then ask for a {FORMAT_NAMES[fmt]} and I'll make one of that answer."
             ),
             status_="answered", plan=None, payload=None, calls=[], user=user,
         )  # fmt: skip
     question, answer = last
-    extras = ", and a chart." if (answer.answer or {}).get("chart") else "."
+    has_chart = bool((answer.answer or {}).get("chart"))
+    if fmt == "png" and not has_chart:
+        return _save_turn(
+            db, conv, body,
+            content=(
+                "That answer has no chart to save as an image. Ask for it as a chart "
+                "(for example \u201cshow that as a bar chart\u201d), then ask for the image."
+            ),
+            status_="answered", plan=None, payload=None, calls=[], user=user,
+        )  # fmt: skip
     file = _last_file(previous)
-    kept = (file.answer or {}).get("style") if file is not None else None
-    if file is None or (file.answer or {}).get("message_id") != answer.id:
-        kept = None
+    kept = None
+    if file is not None and (file.answer or {}).get("message_id") == answer.id:
+        kept = (file.answer or {}).get("style")  # keep the formatting already chosen
+    what = {
+        "xlsx": "styled header, filters, number formats"
+        + (", and a native Excel chart" if has_chart else ""),
+        "pdf": f"title, summary{', chart' if has_chart else ''} and table",
+        "docx": f"title, summary{', chart' if has_chart else ''} and a formatted table",
+        "pptx": f"the answer{' with an editable chart' if has_chart else ''}, then the data",
+        "csv": "the plain data, ready for any tool",
+        "png": "the chart as a high-resolution picture",
+    }[fmt]  # fmt: skip
     return _save_turn(
         db, conv, body,
-        content=(
-            f"Here's a formatted Excel workbook of \u201c{question.content}\u201d: "
-            f"styled header, filters, number formats{extras}"
-        ),
+        content=f"Here's a {FORMAT_NAMES[fmt]} of \u201c{question.content}\u201d: {what}.",
         status_="answered", plan=None,
-        payload={"type": "file", "format": "xlsx", "message_id": answer.id,
+        payload={"type": "file", "format": fmt, "message_id": answer.id,
                  "label": question.content[:120], **({"style": kept} if kept else {})},
         calls=[], user=user,
     )  # fmt: skip
@@ -655,49 +712,31 @@ def _download(content: bytes, media_type: str, question: str, ext: str) -> Respo
     )
 
 
-@router.get("/messages/{message_id}/export.pdf")
-def export_answer_pdf(message_id: str, user: CurrentUser, db: DbSession, today: Today) -> Response:
-    """A PDF report of a table answer: title, summary, bar chart and table."""
+@router.get("/messages/{message_id}/export.{fmt}")
+def export_answer(
+    message_id: str, fmt: str, user: CurrentUser, db: DbSession, today: Today
+) -> Response:
+    """A table answer as Excel, PDF, Word, PowerPoint, CSV or a chart PNG. For a file
+    message: the answer it points at, with the formatting asked for in chat."""
+    if fmt not in FORMATS:
+        raise not_found("Export format")
+    builder, media_type, _name = FORMATS[fmt]
     reply, answer, question, ds, style = _export_parts(db, user, message_id)
-    content = build_answer_pdf(
-        question=question,
-        summary=reply.content,
-        table=answer["table"],
-        chart=answer.get("chart"),
-        dataset_name=ds.name if ds else "",
-        created_at=reply.created_at,
-        explanation=answer.get("explanation"),
-        style=style,
-        today=today,
-    )
+    try:
+        content = builder(
+            question=question,
+            summary=reply.content,
+            table=answer["table"],
+            chart=answer.get("chart"),
+            dataset_name=ds.name if ds else "",
+            created_at=reply.created_at,
+            explanation=answer.get("explanation"),
+            style=style,
+            today=today,
+        )
+    except NothingToExportError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     audit.record(db, user, "answer.exported", target_type="message", target_id=reply.id,
-                 format="pdf")  # fmt: skip
+                 format=fmt)  # fmt: skip
     db.commit()
-    return _download(content, "application/pdf", question, "pdf")
-
-
-@router.get("/messages/{message_id}/export.xlsx")
-def export_answer_xlsx(message_id: str, user: CurrentUser, db: DbSession, today: Today) -> Response:
-    """A styled Excel workbook of a table answer: title, summary, formatted table, chart.
-    For a file message, the answer it points at with the formatting asked for in chat."""
-    reply, answer, question, ds, style = _export_parts(db, user, message_id)
-    content = build_answer_workbook(
-        question=question,
-        summary=reply.content,
-        table=answer["table"],
-        chart=answer.get("chart"),
-        dataset_name=ds.name if ds else "",
-        created_at=reply.created_at,
-        explanation=answer.get("explanation"),
-        style=style,
-        today=today,
-    )
-    audit.record(db, user, "answer.exported", target_type="message", target_id=reply.id,
-                 format="xlsx")  # fmt: skip
-    db.commit()
-    return _download(
-        content,
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        question,
-        "xlsx",
-    )
+    return _download(content, media_type, question, fmt)

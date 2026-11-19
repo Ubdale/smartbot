@@ -454,12 +454,12 @@ def test_code_before_any_question_explains(
     assert "Ask me a question about the data first" in reply["content"]
 
 
-def test_download_request_points_to_buttons(
+def test_download_before_any_answer_explains(
     app: FastAPI, client: TestClient, acct: Account, dataset_id: str
 ) -> None:
     llm = use_llm(app, FakeLLM([]))
     reply = ask(client, acct, "give me a download option", dataset_id=dataset_id).json()["reply"]
-    assert "CSV" in reply["content"]
+    assert "Ask me for the data first" in reply["content"]
     assert llm.calls == []
 
 
