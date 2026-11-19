@@ -1,11 +1,12 @@
 """A one-page-or-more PDF report of an answer: title, summary, bar chart, table."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from fpdf import FPDF
 
-from app.exporting import _pretty, answer_title, is_id_like
+from app.exporting import _pretty, answer_title, is_id_like, summable_columns
+from app.styling import ExportStyle, apply_style, color
 
 BRAND = (79, 70, 229)
 BAND = (238, 242, 255)
@@ -22,6 +23,10 @@ _ASCII = str.maketrans(
         chr(0x2011): "-", chr(0x00A0): " ",
     }
 )  # fmt: skip
+
+
+def _rgb(hex_: str) -> tuple[int, int, int]:
+    return (int(hex_[0:2], 16), int(hex_[2:4], 16), int(hex_[4:6], 16))
 
 
 def _t(value: Any) -> str:
@@ -59,11 +64,21 @@ def build_answer_pdf(
     dataset_name: str,
     created_at: datetime,
     explanation: dict[str, Any] | None = None,
+    style: ExportStyle | None = None,
+    today: date | None = None,
 ) -> bytes:
     columns: list[str] = table.get("columns", [])
-    rows: list[list[Any]] = table.get("rows", [])[:MAX_ROWS]
+    all_rows: list[list[Any]] = table.get("rows", [])
     explanation = explanation or {}
-    title = answer_title(question, explanation.get("description", ""))
+    style = style or ExportStyle()
+    styled = apply_style(
+        columns, all_rows, style, today or date.today(),
+        numeric_columns=summable_columns(columns, all_rows),
+    )  # fmt: skip
+    columns = styled.columns
+    rows = styled.rows[:MAX_ROWS]
+    title = style.title or answer_title(question, explanation.get("description", ""))
+    header_fill, header_text = styled.header or ("4F46E5", "FFFFFF")
     decimals = frozenset(
         c
         for j, c in enumerate(columns)
@@ -133,8 +148,8 @@ def build_answer_pdf(
 
         def header() -> None:
             pdf.set_font("Helvetica", "B", 8)
-            pdf.set_fill_color(*BRAND)
-            pdf.set_text_color(255, 255, 255)
+            pdf.set_fill_color(*_rgb(header_fill))
+            pdf.set_text_color(*_rgb(header_text))
             for j, c in enumerate(columns):
                 pdf.cell(widths[j], 7, _t(_pretty(c)), fill=True, align="R" if numeric[j] else "L")
             pdf.ln()
@@ -146,14 +161,37 @@ def build_answer_pdf(
             if pdf.get_y() > pdf.h - 24:
                 pdf.add_page()
                 header()
-            pdf.set_fill_color(*(BAND if i % 2 else (255, 255, 255)))
+            mark = color(styled.row_colors[i], strong=False)
+            if mark:
+                pdf.set_fill_color(*_rgb(mark[0]))
+                pdf.set_text_color(*_rgb(mark[1]))
+            else:
+                band = style.banded_rows and i % 2
+                pdf.set_fill_color(*(BAND if band else (255, 255, 255)))
+                pdf.set_text_color(*INK)
             for j, c in enumerate(columns):
                 text = _fmt(row[j], c, decimals)
                 while text and pdf.get_string_width(text) > widths[j] - 2:
                     text = text[:-2] + "~"
                 pdf.cell(widths[j], 6, text, fill=True, align="R" if numeric[j] else "L")
             pdf.ln()
-        if len(table.get("rows", [])) > MAX_ROWS:
+        # Summary rows (computed by code over all rows, not just the ones shown).
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(*INK)
+        pdf.set_fill_color(255, 255, 255)
+        for label, values in styled.summary:
+            first_text = next((j for j, v in enumerate(values) if v is None), None)
+            for j, c in enumerate(columns):
+                v = values[j]
+                if j == first_text:
+                    text = label
+                elif v is None:
+                    text = ""
+                else:
+                    text = _fmt(v, c, decimals | {c} if label == "Average" else decimals)
+                pdf.cell(widths[j], 6, _t(text), border="T", align="R" if numeric[j] else "L")
+            pdf.ln()
+        if len(styled.rows) > MAX_ROWS:
             pdf.set_text_color(*MUTED)
             pdf.cell(0, 6, f"Showing the first {MAX_ROWS} rows. Download Excel for all of them.")
 

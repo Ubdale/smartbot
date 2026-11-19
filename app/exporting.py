@@ -12,6 +12,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
+from app.styling import ExportStyle, apply_style, color, describe_style
+
 BRAND = "4F46E5"  # indigo, as in the app
 BAND = "EEF2FF"
 GRID = Side(style="thin", color="E4E4E7")
@@ -90,12 +92,22 @@ def build_answer_workbook(
     dataset_name: str,
     created_at: datetime,
     explanation: dict[str, Any] | None = None,
+    style: ExportStyle | None = None,
+    today: date | None = None,
 ) -> bytes:
     columns: list[str] = table.get("columns", [])
     rows: list[list[Any]] = table.get("rows", [])
     explanation = explanation or {}
     title = answer_title(question, explanation.get("description", ""))
     plan = explanation.get("plan") or {}
+
+    # Formatting the user asked for: applied by code (sort, hide, highlight, summaries).
+    style = style or ExportStyle()
+    summable = summable_columns(columns, rows)
+    styled = apply_style(columns, rows, style, today or date.today(), numeric_columns=summable)
+    columns, rows = styled.columns, styled.rows
+    title = style.title or title
+    header_fill, header_text = styled.header or (BRAND, "FFFFFF")
 
     wb = Workbook()
     ws: Worksheet = wb.active  # type: ignore[assignment]
@@ -118,20 +130,27 @@ def build_answer_workbook(
     header_row = 5
     for j, name in enumerate(columns, start=1):
         cell = ws.cell(row=header_row, column=j, value=_pretty(name))
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill("solid", fgColor=BRAND)
+        cell.font = Font(bold=True, color=header_text)
+        cell.fill = PatternFill("solid", fgColor=header_fill)
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = Border(bottom=GRID)
     ws.row_dimensions[header_row].height = 22
 
     formats = [_number_format([r[j] for r in rows], columns[j]) for j in range(len(columns))]
     for i, row in enumerate(rows, start=header_row + 1):
-        band = PatternFill("solid", fgColor=BAND) if (i - header_row) % 2 == 0 else None
+        mark = color(styled.row_colors[i - header_row - 1], strong=False)
+        fill: PatternFill | None = None
+        if mark:
+            fill = PatternFill("solid", fgColor=mark[0])
+        elif style.banded_rows and (i - header_row) % 2 == 0:
+            fill = PatternFill("solid", fgColor=BAND)
         for j, value in enumerate(row, start=1):
             cell = ws.cell(row=i, column=j, value=_cell_value(value))
             cell.border = Border(bottom=GRID)
-            if band:
-                cell.fill = band
+            if fill:
+                cell.fill = fill
+            if mark:
+                cell.font = Font(color=mark[1])
             fmt = formats[j - 1]
             if fmt and isinstance(cell.value, int | float):
                 cell.number_format = fmt
@@ -148,7 +167,9 @@ def build_answer_workbook(
     # Grouped totals/counts: a live Totals row (Excel formulas) and data bars.
     metric = plan.get("metric")
     value_col = len(columns)
-    if (
+    if style.summary_rows is not None:
+        _summary_rows(ws, style, columns, summable, formats, header_row, last_row)
+    elif (
         rows
         and metric in ("sum", "count", "count_distinct")
         and len(columns) > 1
@@ -156,10 +177,6 @@ def build_answer_workbook(
     ):
         letter = get_column_letter(value_col)
         rng = f"{letter}{header_row + 1}:{letter}{last_row}"
-        ws.conditional_formatting.add(
-            rng,
-            DataBarRule(start_type="min", end_type="max", color="A5B4FC"),  # type: ignore[no-untyped-call]
-        )
         if metric == "sum" or (metric == "count" and not plan.get("time_grain")):
             total_row = last_row + 1
             ws.cell(row=total_row, column=1, value="Total").font = Font(bold=True)
@@ -170,6 +187,17 @@ def build_answer_workbook(
                 ws.cell(row=total_row, column=j).border = Border(
                     top=Side(style="medium", color=BRAND)
                 )
+    if (
+        rows
+        and metric in ("sum", "count", "count_distinct")
+        and len(columns) > 1
+        and (formats[-1] not in (None, "0"))
+    ):
+        letter = get_column_letter(value_col)
+        ws.conditional_formatting.add(
+            f"{letter}{header_row + 1}:{letter}{last_row}",
+            DataBarRule(start_type="min", end_type="max", color="A5B4FC"),  # type: ignore[no-untyped-call]
+        )
     ws.freeze_panes = f"A{header_row + 1}"
 
     # Column widths from the content (capped so long text wraps instead).
@@ -204,7 +232,8 @@ def build_answer_workbook(
     ws.page_setup.orientation = "landscape" if len(columns) > 4 else "portrait"
     ws.page_setup.fitToWidth = 1
 
-    _about_sheet(wb, question, title, explanation, dataset_name, created_at, len(rows))
+    _about_sheet(wb, question, title, explanation, dataset_name, created_at, len(rows),
+                 describe_style(style) if style != ExportStyle() else None)  # fmt: skip
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -218,6 +247,7 @@ def _about_sheet(
     dataset_name: str,
     created_at: datetime,
     row_count: int,
+    formatting: str | None = None,
 ) -> None:
     """How the numbers were made, for anyone the file is forwarded to."""
     ws = wb.create_sheet("How this was made")
@@ -231,6 +261,7 @@ def _about_sheet(
         ("Source file", dataset_name),
         ("Rows in this answer", row_count),
         ("Created", f"{created_at:%d %b %Y %H:%M} UTC"),
+        *([("Formatting", formatting)] if formatting else []),
         ("Note", explanation.get("data_note") or
          "Every number was computed from your data by AskData's database engine, not "
          "written by AI."),
@@ -241,3 +272,48 @@ def _about_sheet(
         ws.cell(row=i, column=1, value=label).font = Font(bold=True, color=BRAND)
         cell = ws.cell(row=i, column=2, value=_cell_value(value))
         cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+
+_SUMMARY_FORMULA = {"total": "SUM", "average": "AVERAGE", "min": "MIN", "max": "MAX",
+                    "count": "COUNT"}  # fmt: skip
+
+
+def summable_columns(columns: list[str], rows: list[list[Any]]) -> list[str]:
+    """Numeric columns it makes sense to total or average (not IDs or years)."""
+    return [
+        c
+        for j, c in enumerate(columns)
+        if _number_format([r[j] for r in rows], c) not in (None, "0")
+    ]
+
+
+def _summary_rows(
+    ws: Worksheet,
+    style: ExportStyle,
+    columns: list[str],
+    summable: list[str],
+    formats: list[str | None],
+    header_row: int,
+    last_row: int,
+) -> None:
+    """Rows of live Excel formulas under the table: =AVERAGE(...), =SUM(...), ..."""
+    for k, kind in enumerate(style.summary_rows or []):
+        r = last_row + 1 + k
+        label_col = next((j for j, c in enumerate(columns, 1) if c not in summable), None)
+        for j, c in enumerate(columns, start=1):
+            cell = ws.cell(row=r, column=j)
+            if k == 0:
+                cell.border = Border(top=Side(style="medium", color=BRAND))
+            if c in summable:
+                letter = get_column_letter(j)
+                func = _SUMMARY_FORMULA[kind]
+                cell.value = f"={func}({letter}{header_row + 1}:{letter}{last_row})"
+                cell.number_format = (
+                    "#,##0" if kind == "count" else
+                    "#,##0.00" if kind == "average" else formats[j - 1] or "#,##0"
+                )  # fmt: skip
+                cell.alignment = Alignment(horizontal="right")
+                cell.font = Font(bold=True)
+        if label_col is not None:
+            label = ws.cell(row=r, column=label_col, value=kind.capitalize())
+            label.font = Font(bold=True)

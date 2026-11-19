@@ -39,6 +39,7 @@ from app.schemas.chat import (
     FeedbackRequest,
     MessageOut,
 )
+from app.styling import ExportStyle, describe_style, interpret_style
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 log = logging.getLogger(__name__)
@@ -219,6 +220,8 @@ def run_ask(
     # Requests about the conversation itself, answered directly (no model call).
     if CODE_REQUEST.search(body.question) and ds.kind == "table":
         return _code_reply(db, conv, body, ds, previous, user)
+    if ds.kind == "table" and is_style_request(body.question, previous):
+        return _style_reply(db, conv, body, previous, user, llm, today)
     if EXCEL_REQUEST.search(body.question) and ds.kind == "table":
         return _excel_reply(db, conv, body, previous, user)
     if EXPORT_REQUEST.search(body.question):
@@ -335,6 +338,87 @@ EXPORT_REQUEST = re.compile(r"\b(download|export)\b", re.I)
 
 
 EXCEL_REQUEST = re.compile(r"\b(excel|xlsx|spreadsheet|workbook)\b", re.I)
+# Clearly about how the export looks.
+STYLE_REQUEST = re.compile(
+    r"\b(highlight|bold|shade)\w*\b"
+    r"|\b(header|heading)s?\b.{0,30}\b(colou?r|red|green|blue|yellow|orange|purple|pink|teal"
+    r"|gr[ae]y|black|indigo)\b"
+    r"|\bcolou?r\s+(the|it|them|rows?|cells?|code)\b"
+    r"|\b(add|include|with)\s+(an?\s+|the\s+)?(average|avg|total|sum|min(imum)?|max(imum)?"
+    r"|count)\s+rows?\b"
+    r"|\b(hide|remove|drop)\s+(the\s+)?[\w ]{1,40}?\s+columns?\b"
+    r"|\b(rename|change|set)\s+the\s+title\b",
+    re.I,
+)
+# Only about looks when the last reply was a file ("now sort it by date", "make it green").
+STYLE_FOLLOW_UP = re.compile(
+    r"\b(sort(ed)?\s+(it\s+|them\s+)?by|red|green|blue|yellow|orange|purple|pink|teal"
+    r"|gr[ae]y|stripes?|banded|title)\b",
+    re.I,
+)
+
+
+def _last_file(previous: list[tuple[Message, Message]]) -> Message | None:
+    for _q, a in reversed(previous):
+        if a.role == "assistant" and (a.answer or {}).get("type") == "file":
+            return a
+        if a.role == "assistant" and (a.answer or {}).get("table") is not None:
+            return None  # a newer table answer: a new request is about that one
+    return None
+
+
+def is_style_request(question: str, previous: list[tuple[Message, Message]]) -> bool:
+    if not previous:
+        return False
+    if STYLE_REQUEST.search(question):
+        return True
+    last = previous[-1][1]
+    return (last.answer or {}).get("type") == "file" and bool(STYLE_FOLLOW_UP.search(question))
+
+
+def _style_reply(
+    db: Session,
+    conv: Conversation,
+    body: AskRequest,
+    previous: list[tuple[Message, Message]],
+    user: User,
+    llm: LLMProvider,
+    today: date,
+) -> AskResponse:
+    """Change how the export looks. The model reads the request; code applies it."""
+    last = _last_table_answer(previous)
+    if last is None:
+        return _save_turn(
+            db, conv, body,
+            content=(
+                "Ask me for the data first (for example \u201copen tasks by due date\u201d), "
+                "then tell me how the Excel should look: colours, highlights, extra rows."
+            ),
+            status_="answered", plan=None, payload=None, calls=[], user=user,
+        )  # fmt: skip
+    question, answer = last
+    file = _last_file(previous)
+    current = ExportStyle()
+    if file is not None and (file.answer or {}).get("message_id") == answer.id:
+        current = ExportStyle.model_validate((file.answer or {}).get("style") or {})
+    table = (answer.answer or {})["table"]
+    try:
+        style, notes, call = interpret_style(
+            llm, body.question, columns=table.get("columns", []),
+            rows=table.get("rows", [])[:200], current=current, today=today,
+        )  # fmt: skip
+    except LLMUnavailableError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    content = f"Done. Your Excel now has: {describe_style(style)}."
+    if notes:
+        content += " Note: " + "; ".join(notes) + "."
+    return _save_turn(
+        db, conv, body, content=content, status_="answered", plan=None,
+        payload={"type": "file", "format": "xlsx", "message_id": answer.id,
+                 "label": question.content[:120],
+                 "style": style.model_dump(mode="json", exclude_defaults=True)},
+        calls=[call], user=user,
+    )  # fmt: skip
 
 
 def _last_table_answer(
@@ -367,6 +451,10 @@ def _excel_reply(
         )  # fmt: skip
     question, answer = last
     extras = ", and a chart." if (answer.answer or {}).get("chart") else "."
+    file = _last_file(previous)
+    kept = (file.answer or {}).get("style") if file is not None else None
+    if file is None or (file.answer or {}).get("message_id") != answer.id:
+        kept = None
     return _save_turn(
         db, conv, body,
         content=(
@@ -375,7 +463,7 @@ def _excel_reply(
         ),
         status_="answered", plan=None,
         payload={"type": "file", "format": "xlsx", "message_id": answer.id,
-                 "label": question.content[:120]},
+                 "label": question.content[:120], **({"style": kept} if kept else {})},
         calls=[], user=user,
     )  # fmt: skip
 
@@ -533,21 +621,28 @@ def give_feedback(
 
 def _export_parts(
     db: DbSession, user: User, message_id: str
-) -> tuple[Message, Conversation, dict[str, Any], str, Dataset | None]:
+) -> tuple[Message, dict[str, Any], str, Dataset | None, ExportStyle | None]:
     reply = db.get(Message, message_id)
     if reply is None or reply.role != "assistant":
         raise not_found("Answer")
     conv = _conversation(db, user, reply.conversation_id)  # checks it's the user's own
     answer = reply.answer or {}
+    style = None
+    if answer.get("type") == "file":
+        style = ExportStyle.model_validate(answer.get("style") or {})
+        target = db.get(Message, answer.get("message_id", ""))
+        if target is None or target.conversation_id != conv.id:
+            raise not_found("Answer")
+        reply, answer = target, target.answer or {}
     if answer.get("type", "table") != "table" or "table" not in answer:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "This answer has no table to export.")
     question = next((m for m in conv.messages if m.position == reply.position - 1), None)
     return (
         reply,
-        conv,
         answer,
         question.content if question else "AskData answer",
         db.get(Dataset, conv.dataset_id),
+        style,
     )
 
 
@@ -561,9 +656,9 @@ def _download(content: bytes, media_type: str, question: str, ext: str) -> Respo
 
 
 @router.get("/messages/{message_id}/export.pdf")
-def export_answer_pdf(message_id: str, user: CurrentUser, db: DbSession) -> Response:
+def export_answer_pdf(message_id: str, user: CurrentUser, db: DbSession, today: Today) -> Response:
     """A PDF report of a table answer: title, summary, bar chart and table."""
-    reply, _conv, answer, question, ds = _export_parts(db, user, message_id)
+    reply, answer, question, ds, style = _export_parts(db, user, message_id)
     content = build_answer_pdf(
         question=question,
         summary=reply.content,
@@ -572,6 +667,8 @@ def export_answer_pdf(message_id: str, user: CurrentUser, db: DbSession) -> Resp
         dataset_name=ds.name if ds else "",
         created_at=reply.created_at,
         explanation=answer.get("explanation"),
+        style=style,
+        today=today,
     )
     audit.record(db, user, "answer.exported", target_type="message", target_id=reply.id,
                  format="pdf")  # fmt: skip
@@ -580,32 +677,27 @@ def export_answer_pdf(message_id: str, user: CurrentUser, db: DbSession) -> Resp
 
 
 @router.get("/messages/{message_id}/export.xlsx")
-def export_answer_xlsx(message_id: str, user: CurrentUser, db: DbSession) -> Response:
-    """A styled Excel workbook of a table answer: title, summary, formatted table, chart."""
-    reply = db.get(Message, message_id)
-    if reply is None or reply.role != "assistant":
-        raise not_found("Answer")
-    conv = _conversation(db, user, reply.conversation_id)  # checks it's the user's own
-    answer = reply.answer or {}
-    if answer.get("type", "table") != "table" or "table" not in answer:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This answer has no table to export.")
-    question = next((m for m in conv.messages if m.position == reply.position - 1), None)
-    ds = db.get(Dataset, conv.dataset_id)
+def export_answer_xlsx(message_id: str, user: CurrentUser, db: DbSession, today: Today) -> Response:
+    """A styled Excel workbook of a table answer: title, summary, formatted table, chart.
+    For a file message, the answer it points at with the formatting asked for in chat."""
+    reply, answer, question, ds, style = _export_parts(db, user, message_id)
     content = build_answer_workbook(
-        question=question.content if question else "AskData answer",
+        question=question,
         summary=reply.content,
         table=answer["table"],
         chart=answer.get("chart"),
         dataset_name=ds.name if ds else "",
         created_at=reply.created_at,
         explanation=answer.get("explanation"),
+        style=style,
+        today=today,
     )
     audit.record(db, user, "answer.exported", target_type="message", target_id=reply.id,
                  format="xlsx")  # fmt: skip
     db.commit()
-    name = re.sub(r"[^A-Za-z0-9]+", "-", question.content if question else "answer").strip("-")
-    return Response(
+    return _download(
         content,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{(name or "answer")[:60]}.xlsx"'},
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        question,
+        "xlsx",
     )

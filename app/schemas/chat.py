@@ -98,6 +98,7 @@ class FileAnswerOut(BaseModel):
     format: Literal["xlsx"]
     message_id: str  # the answer to export
     label: str
+    style: dict[str, Any] | None = None  # formatting asked for in chat (ExportStyle)
 
 
 class MessageOut(BaseModel):
