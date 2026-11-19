@@ -26,7 +26,9 @@ from rapidfuzz import fuzz, process, utils
 
 from app.documents.search import tokenize
 from app.llm.base import ChatMessage, LLMCall, LLMProvider, LLMUnavailableError
+from app.llm.embeddings import Embedder
 from app.query.sql import quote_ident
+from app.vectors import fuse, get_vectors, rank
 
 if TYPE_CHECKING:
     from app.query.executor import ValidatedPlan
@@ -270,15 +272,33 @@ def _column_texts(parquet: Path, column: str) -> dict[str, list[int]]:
     return texts
 
 
-def match_topic(llm: LLMProvider, parquet: Path, column: str, topic: str) -> TopicMatch:
+def column_tag(column: str) -> str:
+    return f"col-{column}"
+
+
+def match_topic(
+    llm: LLMProvider, parquet: Path, column: str, topic: str, embedder: Embedder | None = None
+) -> TopicMatch:
     """Rows of `column` whose text is about `topic`, by meaning."""
     texts = _column_texts(parquet, column)
-    uniques = list(texts)
+    uniques = sorted(texts)  # stable order: the cached vectors line up with it
     calls: list[LLMCall] = []
     words = tokenize(topic)
     try:
+        vectors = (
+            None
+            if len(uniques) <= VERIFY_ALL
+            else get_vectors(embedder, parquet, column_tag(column), uniques)
+        )
         if len(uniques) <= VERIFY_ALL:
             shortlist = uniques
+        elif embedder is not None and vectors is not None:
+            # By meaning (embeddings) and by words, merged: no synonym list needed.
+            scores = _bm25(words, uniques)
+            by_words = [i for i in sorted(range(len(uniques)), key=lambda i: -scores[i])
+                        if scores[i] > 0][:SHORTLIST]  # fmt: skip
+            by_meaning = rank(embedder, vectors, topic, SHORTLIST)
+            shortlist = [uniques[i] for i in fuse(by_words, by_meaning, k=SHORTLIST)]
         else:
             data, call = _call(llm, EXPAND_SYSTEM, f"Topic: {topic}", _KEYWORDS_SCHEMA)
             calls.append(call)
@@ -333,6 +353,7 @@ def apply_retrieval(
     parquet: Path,
     *,
     topic_rows: dict[int, list[int]] | None = None,
+    embedder: Embedder | None = None,
 ) -> Retrieval:
     """Correct filter values to real ones and turn topic filters into row numbers.
 
@@ -350,7 +371,7 @@ def apply_retrieval(
             if topic_rows is not None and i in topic_rows:
                 values[i] = topic_rows[i]
             else:
-                m = match_topic(llm, parquet, f.column, str(values[i]))
+                m = match_topic(llm, parquet, f.column, str(values[i]), embedder)
                 out.calls += m.calls
                 out.notes.append(describe_topic_match(f.column, str(values[i]), m))
                 values[i] = m.rows
@@ -384,3 +405,12 @@ def apply_retrieval(
     plan = vp.plan.model_copy(update={"filters": filters})
     out.plan = ValidatedPlan(plan, vp.kinds, vp.date_range, values)
     return out
+
+
+def topic_texts(parquet: Path, column: str) -> list[str] | None:
+    """The texts of a descriptive column worth embedding ahead of time (sorted, as
+    match_topic uses them), or None for short labels or small columns."""
+    uniques = sorted(_column_texts(parquet, column))
+    if len(uniques) <= VERIFY_ALL or _is_label(uniques):
+        return None
+    return uniques

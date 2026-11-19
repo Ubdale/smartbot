@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     # Bearer token for a self-hosted Ollama behind a reverse proxy (deploy/oracle). Ollama
     # itself has no authentication, so never expose it to the internet without one.
     ollama_api_key: SecretStr | None = None
+    # Search by meaning (embeddings). "auto" = on the Ollama server when the main model
+    # runs there (needs `ollama pull nomic-embed-text`); "none" = keywords only.
+    embed_provider: Literal["auto", "ollama", "none"] = "auto"
+    embed_model: str = "nomic-embed-text"
     gemini_api_key: SecretStr | None = None
     groq_api_key: SecretStr | None = None
 

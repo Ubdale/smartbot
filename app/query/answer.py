@@ -29,6 +29,7 @@ from app.query.retrieval import apply_retrieval, value_hints
 
 if TYPE_CHECKING:
     from app.learning import Remembered
+    from app.llm.embeddings import Embedder
 
 SUMMARY_ROWS = 25
 
@@ -142,6 +143,7 @@ def answer_question(
     on_stage: Callable[[str], None] | None = None,
     notes: str = "",
     remembered: "Remembered | None" = None,
+    embedder: "Embedder | None" = None,
 ) -> Answer:
     """Raises LLMUnavailableError if the model can't be reached during planning."""
     stage = on_stage or (lambda _s: None)
@@ -182,7 +184,7 @@ def answer_question(
         if any(f.op == "about" for f in vp.plan.filters):
             stage("matching")
         try:
-            found = apply_retrieval(llm, vp, parquet)
+            found = apply_retrieval(llm, vp, parquet, embedder=embedder)
         except LLMUnavailableError:
             raise
         except PlanError as exc:

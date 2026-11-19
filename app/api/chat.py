@@ -24,6 +24,7 @@ from app.core.db import get_session_factory
 from app.documents.answer import DocumentAnswer, answer_document_question
 from app.export_formats import FORMATS, NothingToExportError
 from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
+from app.llm.embeddings import get_embedder
 from app.llm.factory import get_llm, get_summary_llm
 from app.models import Conversation, Dataset, Message, UsageEvent, User
 from app.query.answer import Answer, answer_question
@@ -280,6 +281,7 @@ def run_ask(
                 parquet=parquet,
                 history=doc_turns[-2:],
                 on_stage=on_stage,
+                embedder=get_embedder(settings),
             )
             content, status_, plan, payload, calls = (
                 doc.text, doc.status, None, _document_payload(doc), doc.calls
@@ -321,6 +323,7 @@ def run_ask(
                 on_stage=on_stage,
                 notes=learning.glossary_notes(db, workspace_id=user.workspace_id, dataset_id=ds.id),
                 remembered=remembered,
+                embedder=get_embedder(settings),
             )
             content, status_, payload, calls = (
                 result.summary, result.status, _answer_payload(result, ds), result.calls

@@ -1,5 +1,7 @@
 """Upload, list, inspect, preview and delete datasets. Everything is workspace-scoped."""
 
+import logging
+import threading
 import uuid
 from pathlib import Path
 from typing import Annotated, Literal
@@ -20,10 +22,12 @@ from app.connectors.csv_xlsx import (
 )
 from app.connectors.profiling import preview_parquet
 from app.core.config import Settings
-from app.documents.ingest import DOCUMENT_FORMATS, ingest_document
+from app.documents.ingest import DOCUMENT_FORMATS, ingest_document, load_passages
 from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
+from app.llm.embeddings import get_embedder
 from app.llm.factory import make_vision_provider
 from app.models import Dataset, GlossaryTerm, UsageEvent, User
+from app.query.retrieval import column_tag, topic_texts
 from app.schemas.dataset import (
     DatasetOut,
     DatasetSummary,
@@ -33,7 +37,9 @@ from app.schemas.dataset import (
     UploadOut,
 )
 from app.storage import PARQUET_NAME, DatasetStorage, StorageError, get_storage
+from app.vectors import get_vectors
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 CHUNK = 1024 * 1024
@@ -53,6 +59,34 @@ def require_parquet(settings: Settings, ds: Dataset) -> Path:
     if path is None:
         raise HTTPException(status.HTTP_410_GONE, "The dataset's data file is missing.")
     return path
+
+
+def _prepare_search(settings: Settings, ds: Dataset) -> None:
+    """Embed the new dataset's texts in the background, so search by meaning is ready
+    by the first question. Optional: keyword search works meanwhile and without it."""
+    embedder = get_embedder(settings)
+    if embedder is None:
+        return
+    workspace_id, dataset_id, kind = ds.workspace_id, ds.id, ds.kind
+    text_columns = [str(c["name"]) for c in ds.columns if c.get("kind") == "text"]
+
+    def run() -> None:
+        try:
+            path = _storage(settings).ensure_local(workspace_id, dataset_id)
+            if path is None:
+                return
+            if kind == "document":
+                texts = [p.text for p in load_passages(path)]
+                get_vectors(embedder, path, "passages", texts, wait=True)
+                return
+            for column in text_columns:
+                column_texts = topic_texts(path, column)
+                if column_texts:
+                    get_vectors(embedder, path, column_tag(column), column_texts, wait=True)
+        except Exception:  # never let background indexing affect anything else
+            log.warning("Preparing search for dataset %s failed", dataset_id, exc_info=True)
+
+    threading.Thread(target=run, name="prepare-search", daemon=True).start()
 
 
 def get_vision_llm(settings: AppSettings) -> LLMProvider | None:
@@ -231,6 +265,7 @@ async def upload_dataset(
         storage.delete(user.workspace_id, dataset_id)
         raise
 
+    _prepare_search(settings, ds)
     return UploadOut(
         **DatasetOut.model_validate(ds).model_dump(),
         sheet_names=table.sheet_names if table else [],

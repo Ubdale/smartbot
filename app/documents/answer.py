@@ -9,7 +9,9 @@ from typing import Literal
 from app.documents.ingest import Passage, load_passages
 from app.documents.search import search, tokenize
 from app.llm.base import ChatMessage, LLMCall, LLMProvider
+from app.llm.embeddings import Embedder
 from app.query.presentation import text_is_grounded
+from app.vectors import fuse, get_vectors, rank
 
 TOP_K = 5
 OVERVIEW_PASSAGES = 8
@@ -74,6 +76,22 @@ def history_text(turns: list[tuple[str, str]]) -> list[ChatMessage]:
     return msgs
 
 
+def find_passages(
+    query: str, passages: list[Passage], k: int, embedder: Embedder | None, parquet: Path
+) -> list[Passage]:
+    """Hybrid search: passages that share the query's words AND passages that mean the
+    same thing in other words ("pay" for "salary"), merged. Keywords only when the
+    embedding server isn't available."""
+    keyword = search(query, passages, k=k * 2)
+    vectors = get_vectors(embedder, parquet, "passages", [p.text for p in passages])
+    if embedder is None or vectors is None:
+        return keyword[:k]
+    position = {p.chunk_id: i for i, p in enumerate(passages)}
+    by_words = [position[p.chunk_id] for p in keyword]
+    by_meaning = rank(embedder, vectors, query, k * 2)
+    return [passages[i] for i in fuse(by_words, by_meaning, k=k)]
+
+
 def answer_document_question(
     llm: LLMProvider,
     question: str,
@@ -81,6 +99,7 @@ def answer_document_question(
     parquet: Path,
     history: list[tuple[str, str]],
     on_stage: Callable[[str], None] | None = None,
+    embedder: Embedder | None = None,
 ) -> DocumentAnswer:
     """Raises LLMUnavailableError if the model can't be reached."""
     stage = on_stage or (lambda _s: None)
@@ -99,7 +118,7 @@ def answer_document_question(
         # Follow-ups ("explain more", "what about 2024?") search with the previous
         # question and answer too, so they find the same topic again.
         query = " ".join([previous_q, previous_a if vague else "", question])
-        found = search(query, passages, k=TOP_K * (2 if vague else 1))
+        found = find_passages(query, passages, TOP_K * (2 if vague else 1), embedder, parquet)
         if not found:
             # No shared keywords (different wording): let the model read across the
             # document rather than giving up. It still says so if the answer isn't there.
