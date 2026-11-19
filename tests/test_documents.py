@@ -262,3 +262,25 @@ def test_search_matches_word_forms() -> None:
     from app.documents.search import tokenize
 
     assert set(tokenize("types of normalizations")) & set(tokenize("Normal forms: 1NF, 2NF"))
+
+
+def test_explain_more_follow_up_expands_the_previous_answer(
+    app: FastAPI, client: TestClient, acct: Account, doc_id: str
+) -> None:
+    llm = FakeLLM([
+        json.dumps({"found": True, "answer": "It is the company handbook [1].", "sources": [1]}),
+        json.dumps({"found": True, "answer": "It covers leave and benefits [1].", "sources": [1]}),
+    ])  # fmt: skip
+    app.dependency_overrides[get_llm] = lambda: llm
+    first = client.post(
+        "/chat/ask",
+        headers=acct.headers,
+        json={"question": "What is this document about?", "dataset_id": doc_id},
+    )
+    conv = first.json()["conversation_id"]
+    reply = ask(client, acct, "can you explain more?", conversation_id=conv)["reply"]
+    assert reply["status"] == "answered"
+    assert reply["content"] == "It covers leave and benefits [1]."
+    # The model saw the earlier turn, so "more" means more about the same thing.
+    sent = " ".join(m.content for m in llm.calls[-1][0])
+    assert "What is this document about?" in sent

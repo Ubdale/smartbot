@@ -7,12 +7,19 @@ from pathlib import Path
 from typing import Literal
 
 from app.documents.ingest import Passage, load_passages
-from app.documents.search import search
+from app.documents.search import search, tokenize
 from app.llm.base import ChatMessage, LLMCall, LLMProvider
 from app.query.presentation import text_is_grounded
 
 TOP_K = 5
 OVERVIEW_PASSAGES = 8
+WHOLE_DOC_CHARS = 14_000  # documents up to ~4 pages are always read in full
+# "Explain more", "tell me more", "elaborate", "go on": about the previous answer.
+MORE = re.compile(
+    r"^\W*(can you |could you |please )?(explain|tell( me)?|say|elaborate|go on|continue|"
+    r"details?|more|expand)\b.{0,25}$",
+    re.I,
+)
 # "What is this document about?", "summarize it", "main points": the whole document,
 # not a keyword search (those words don't appear in the text itself).
 OVERVIEW = re.compile(
@@ -79,18 +86,24 @@ def answer_document_question(
     stage = on_stage or (lambda _s: None)
     stage("searching")
     passages = load_passages(parquet)
-    # Follow-ups ("what about 2024?") search with the previous question's words too.
-    query = " ".join([q for q, _ in history[-1:]] + [question])
     if not passages:
         return DocumentAnswer("failed", NO_TEXT, [], [], grounded=True)
-    if OVERVIEW.search(question):
-        found = spread(passages, OVERVIEW_PASSAGES)
+    previous_q, previous_a = history[-1] if history else ("", "")
+    vague = len(tokenize(question)) < 2 or bool(MORE.search(question))
+    if sum(len(p.text) for p in passages) <= WHOLE_DOC_CHARS:
+        found = passages  # a short document: always read all of it
+    elif OVERVIEW.search(question) or (vague and OVERVIEW.search(previous_q)):
+        # "What is it about?", or "explain more" after that: from across the document.
+        found = spread(passages, OVERVIEW_PASSAGES * (2 if vague and history else 1))
     else:
-        found = search(query, passages, k=TOP_K)
+        # Follow-ups ("explain more", "what about 2024?") search with the previous
+        # question and answer too, so they find the same topic again.
+        query = " ".join([previous_q, previous_a if vague else "", question])
+        found = search(query, passages, k=TOP_K * (2 if vague else 1))
         if not found:
-            # No shared keywords (different wording): let the model read the beginning
-            # rather than giving up. It still says so if the answer isn't there.
-            found = spread(passages, TOP_K)
+            # No shared keywords (different wording): let the model read across the
+            # document rather than giving up. It still says so if the answer isn't there.
+            found = spread(passages, OVERVIEW_PASSAGES)
 
     stage("reading")
     numbered = [(i, p.page, p.text) for i, p in enumerate(found, start=1)]

@@ -91,4 +91,4 @@ def test_prompt_is_compact() -> None:
 
     msgs = plan_messages("q", 'Table "t" (1 rows). Columns:\n- a (number)', [])
     assert len(msgs) == 2  # one system message with the examples, one question
-    assert sum(len(m.content) for m in msgs) < 6200  # ~1.5k tokens: CPU inference cost
+    assert sum(len(m.content) for m in msgs) < 6800  # ~1.7k tokens: CPU inference cost

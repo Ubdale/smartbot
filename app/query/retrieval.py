@@ -82,6 +82,10 @@ _SKIP = frozenset(
         "my", "of", "on", "or", "show", "tell", "that", "the", "their", "them", "there",
         "this", "to", "total", "was", "what", "when", "where", "which", "who", "with",
         "you", "all", "any", "per", "each", "vs",
+        # Roman Urdu filler words ("Sara ke kitne tasks hain?")
+        "ka", "ke", "ki", "ko", "se", "mein", "main", "hai", "hain", "kitne", "kitni",
+        "kitna", "kya", "kaun", "konsa", "kis", "batao", "bataen", "dikhao", "wala",
+        "wale", "wali", "sab", "aur", "ya", "liye", "kar", "karo", "hua", "hue",
     ]
 )  # fmt: skip
 

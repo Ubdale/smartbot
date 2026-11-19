@@ -48,6 +48,12 @@ Rules:
   something this table can't answer, set clarification_needed to a short question.
 - If you asked a clarifying question and the user replies ("yes", "the formulas"), answer
   the original question using that reply. Never ask the same question twice.
+- Questions may be in Urdu, Roman Urdu (Urdu in English letters) or a mix with English,
+  e.g. "Sara ke kitne tasks pending hain?" = "how many pending tasks does Sara have?",
+  "har region ka total revenue" = "total revenue by region". Plan them the same way.
+  Write date_phrase in English: "2025 mein" -> "2025", "pichle mahine" -> "last month",
+  "is saal" -> "this year", "pichle 30 din" -> "last 30 days". "batao"/"dikhao" mean
+  "tell/show me": answer, never ask for clarification because of the language.
 Reply with the JSON plan only."""
 
 EXAMPLE_TABLE = """Table "orders" (12,400 rows). Columns:
@@ -106,6 +112,9 @@ EXAMPLES: list[tuple[str, dict[str, Any]]] = [
      {"metric": "count", "group_by": ["store"],
       "filters": [{"column": "review", "op": "about", "value": "long wait or slow service"}],
       "chart": "bar"}),
+    ("Har store ka total amount batao",
+     {"metric": "sum", "metric_column": "amount", "group_by": ["store"],
+      "sort": {"by": "value", "direction": "desc"}, "chart": "bar"}),
     ("How is our employee morale?",
      {"clarification_needed": "This table has orders, not employee data. Do you want "
       "to ask about orders, stores or customers instead?"}),
@@ -185,7 +194,9 @@ SUMMARY_SYSTEM = """You write a 2-3 sentence plain-English summary of a query re
 business user. Use ONLY numbers that appear in the result table, copied exactly or rounded
 (e.g. 1,234,567 -> 1.2 million). Never calculate new numbers: no sums, differences,
 percentages or averages of your own. Mention the most important finding first. No
-preamble, no bullet points, no markdown."""
+preamble, no bullet points, no markdown. Write in the language of the question: Roman Urdu
+for a Roman Urdu question, Urdu script for Urdu, otherwise English. Always write numbers as
+digits exactly as in the table (never lakh/crore or number words)."""
 
 
 def summary_messages(question: str, description: str, table_text: str) -> list["ChatMessage"]:
@@ -218,11 +229,16 @@ TABLE_ROWS_SCHEMA: dict[str, Any] = {
 
 
 DOC_SYSTEM = """You answer questions about a document using ONLY the numbered passages given.
-- Answer in 1-4 sentences of plain English. Cite the passages you used like [1] or [2][3].
+- Answer in 1-6 sentences of plain English. Cite the passages you used like [1] or [2][3].
 - Copy numbers, dates and names exactly as written in the passages. Never calculate,
   estimate or add facts that aren't in the passages.
 - If the passages don't contain the answer, set found to false and say briefly that the
-  document doesn't seem to cover it."""
+  document doesn't seem to cover it.
+- A follow-up like "explain more" or "tell me more" asks you to expand on your previous
+  answer with more detail from the passages: do that (found = true) whenever the
+  passages are about the same subject.
+- Answer in the language of the question (Roman Urdu, Urdu or English); keep quoted
+  names, numbers and dates exactly as written in the passages."""
 
 DOC_ANSWER_SCHEMA: dict[str, Any] = {
     "type": "object",

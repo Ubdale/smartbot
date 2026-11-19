@@ -142,6 +142,20 @@ CASES: list[Case] = [
     Case("hr", "Average salary for remote versus office employees",
          lambda d: d.groupby("is_remote").annual_salary.mean(), "groups",
          {"metric": "avg", "metric_column": "annual_salary", "group_by": ["is_remote"]}),
+    # --- Roman Urdu ----------------------------------------------------------------------
+    Case("sales", "Har region ka total revenue batao",
+         lambda d: d.groupby("region").revenue.sum(), "groups",
+         {**SUM_REV, "group_by": ["region"]}),
+    Case("sales", "2025 mein kitne orders aaye?",
+         lambda d: len(_between(d, "order_date", "2025-01-01", "2026-01-01")), "scalar",
+         {"metric": "count", "date_column": "order_date", "date_phrase": "2025"}),
+    Case("hr", "Engineering department mein average salary kitni hai?",
+         lambda d: d[d.department == "Engineering"].annual_salary.mean(), "scalar",
+         {"metric": "avg", "metric_column": "annual_salary",
+          "filters": [{"column": "department", "op": "=", "value": "Engineering"}]}),
+    Case("hr", "Har department mein kitne log hain?",
+         lambda d: d.groupby("department").size(), "groups",
+         {"metric": "count", "group_by": ["department"]}),
 ]  # fmt: skip
 
 
