@@ -213,6 +213,9 @@ def validate_plan(plan: QueryPlan, columns: list[ColumnInfo], today: date) -> Va
         kinds[date_column] = date_cols[0].kind
 
     if plan.time_grain:
+        # "Hires per year" sometimes comes back also grouped by the raw date: the time
+        # grouping already covers it, so drop it rather than splitting into every day.
+        group_by = [g for g in group_by if g != date_column]
         if len(group_by) > 1:
             raise PlanError("With time_grain, group_by can have at most one column.")
         if plan.time_grain in group_by:

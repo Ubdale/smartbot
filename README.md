@@ -110,6 +110,15 @@ Only the column summary (types, 3 sample values, min/max) is ever sent to the LL
 
 Every LLM call is logged with its token counts in `usage_events`, per workspace and user.
 
+### Accuracy (golden questions)
+
+[evals/golden.py](evals/golden.py) holds 30 questions about the sample data, each with its answer computed independently in pandas and a reference plan.
+
+- **The calculation engine is exact:** the test suite runs every reference plan and checks it equals pandas (`tests/test_golden_reference.py`, also in CI).
+- **Model planning accuracy:** `uv run python scripts/run_eval.py` asks the configured model all 30 questions and scores how often its plan gives the right answer (exit code 1 below 85%). Use `--pause 6` on free tiers with per-minute limits.
+
+Latest scores (2026-11-19): own model qwen2.5:7b on Oracle CPU **26/30 = 87%** (3-18 s per question, summaries off); Groq gpt-oss-120b **27/30 = 90%** (measured before the last prompt improvements).
+
 ### Sample data
 
 `sample_data/` holds synthetic demo data: `hr_employees.csv` (400 employees) and `sales_orders.csv` (3,000 orders, 2024-01 to 2026-09). It's generated deterministically, so the files are identical every time:

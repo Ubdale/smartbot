@@ -78,7 +78,7 @@ known-first-party = ["app"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["app", "tests", "scripts", "alembic/env.py"]
+files = ["app", "tests", "scripts", "evals", "alembic/env.py"]
 
 [[tool.mypy.overrides]]
 module = ["alembic.*", "xlwt", "pypdfium2"]

@@ -251,3 +251,13 @@ def test_sort_by_metric_name_means_value(sales: Any, by: str) -> None:
     assert vp.plan.sort.by == "value"
     values = [row[1] for row in r.rows]
     assert values == sorted(values)
+
+
+def test_time_grain_drops_the_raw_date_from_groups(hr: Any) -> None:
+    vp, r = run(
+        hr,
+        {"metric": "count", "group_by": ["hire_date"], "time_grain": "year",
+         "date_column": "hire_date", "limit": 100},
+    )  # fmt: skip
+    assert vp.plan.group_by == []
+    assert r.columns == ["year", "count"]

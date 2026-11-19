@@ -29,6 +29,11 @@ Rules:
 - filters: op is one of = != > >= < <= in contains between. Use values from the
   column samples when possible. "in" takes a list; "between" takes [low, high].
 - "top N" / "bottom N": sort by value desc/asc and set limit N.
+- "Which X has the most/least Y" means the total (sum, or count) of Y per X, sorted, limit 1.
+  Use min/max only for the single smallest/largest value ("the biggest order").
+- A word in the question that matches a value of a text column (see the examples given
+  for each column) is a filter on that column, e.g. "Subscriptions revenue" ->
+  filter category = "Subscriptions".
 - chart: bar for comparing groups, line for trends over time, pie for shares of a total
   (few groups), none for a single number.
 - If the question is a follow-up ("now split by city", "only for 2025", "what about X"),
@@ -81,6 +86,17 @@ EXAMPLES: list[tuple[str, dict[str, Any]]] = [
                   {"column": "amount", "op": ">", "value": 300}],
       "sort": {"by": "amount", "direction": "desc"}, "limit": 50}),
     ("What is this data about?", {"metric": "describe"}),
+    ("Revenue last month",
+     {"metric": "sum", "metric_column": "amount", "date_column": "order_day",
+      "date_phrase": "last month"}),
+    ("Which store made the least money?",
+     {"metric": "sum", "metric_column": "amount", "group_by": ["store"],
+      "sort": {"by": "value", "direction": "asc"}, "limit": 1, "chart": "bar"}),
+    ("Biggest order in each store",
+     {"metric": "max", "metric_column": "amount", "group_by": ["store"], "chart": "bar"}),
+    ("How many Tea orders in 2024?",
+     {"metric": "count", "date_column": "order_day", "date_phrase": "2024",
+      "filters": [{"column": "product_type", "op": "=", "value": "Tea"}]}),
     ("How is our employee morale?",
      {"clarification_needed": "This table has orders, not employee data. Do you want "
       "to ask about orders, stores or customers instead?"}),
