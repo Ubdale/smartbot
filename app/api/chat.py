@@ -507,11 +507,10 @@ def _file_reply(
     if file is not None and (file.answer or {}).get("message_id") == answer.id:
         kept = (file.answer or {}).get("style")  # keep the formatting already chosen
     what = {
-        "xlsx": "styled header, filters, number formats"
-        + (", and a native Excel chart" if has_chart else ""),
-        "pdf": f"title, summary{', chart' if has_chart else ''} and table",
-        "docx": f"title, summary{', chart' if has_chart else ''} and a formatted table",
-        "pptx": f"the answer{' with an editable chart' if has_chart else ''}, then the data",
+        "xlsx": "just the table, with a styled header, filters and number formats",
+        "pdf": "just the table, ready to print",
+        "docx": "just the table, formatted",
+        "pptx": "just the table, a few rows per slide",
         "csv": "the plain data, ready for any tool",
         "png": "the chart as a high-resolution picture",
     }[fmt]  # fmt: skip

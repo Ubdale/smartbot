@@ -1,4 +1,5 @@
-"""Every download format for an answer: Excel, PDF, CSV, Word, PowerPoint and a chart PNG.
+"""Every download format for an answer. Table formats (Excel, PDF, CSV, Word, PowerPoint)
+contain only the table; the chart exports on its own as a PNG.
 
 All builders take the same arguments and apply the formatting asked for in chat
 (ExportStyle) the same way, so a "green header, overdue in red" request looks the
@@ -18,13 +19,11 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 from pptx import Presentation
-from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor as PptColor
-from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 from pptx.util import Inches as PptInches
 from pptx.util import Pt as PptPt
 
-from app.charts import chart_series, render_chart_png
+from app.charts import render_chart_png
 from app.exporting import (
     BAND,
     BRAND,
@@ -179,7 +178,7 @@ def build_answer_docx(
     style: ExportStyle | None = None,
     today: date | None = None,
 ) -> bytes:
-    """A Word file of the table: a title, the chart picture and the formatted table."""
+    """A Word file of the table: a title and the formatted table."""
     explanation = explanation or {}
     styled, style, decimals = _prepare(table, style, today)
     title = style.title or answer_title(question, explanation.get("description", ""))
@@ -190,20 +189,10 @@ def build_answer_docx(
         section.page_width, section.page_height = section.page_height, section.page_width
     for side in ("left_margin", "right_margin", "top_margin", "bottom_margin"):
         setattr(section, side, Inches(0.7))
-    usable = (
-        int(section.page_width or 0)
-        - int(section.left_margin or 0)
-        - int(section.right_margin or 0)
-    )
 
     heading = doc.add_heading(title, level=1)
     for run in heading.runs:
         run.font.color.rgb = RGBColor.from_string("18181B")
-    png = render_chart_png(chart, table.get("columns", []), table.get("rows", []),
-                           y_label=_pretty(chart["y"]) if chart else "")  # fmt: skip
-    if png:
-        doc.add_picture(io.BytesIO(png), width=usable)
-
     if styled.columns:
         numeric = _numeric(styled)
         rows = styled.rows[:MAX_DOC_ROWS]
@@ -236,8 +225,6 @@ def build_answer_docx(
 
 # --- PowerPoint -----------------------------------------------------------------------
 
-_PPT_CHART = {"line": XL_CHART_TYPE.LINE_MARKERS, "pie": XL_CHART_TYPE.PIE}
-
 
 def _textbox(slide: Any, text: str, left: float, top: float, width: float, height: float,
              *, size: int, bold: bool = False, hex_: str = "18181B") -> None:  # fmt: skip
@@ -262,7 +249,7 @@ def build_answer_pptx(
     style: ExportStyle | None = None,
     today: date | None = None,
 ) -> bytes:
-    """Slides: the chart (native, editable) if there is one, then the table."""
+    """Slides of the table (12 rows per slide)."""
     explanation = explanation or {}
     styled, style, decimals = _prepare(table, style, today)
     title = style.title or answer_title(question, explanation.get("description", ""))
@@ -278,34 +265,6 @@ def build_answer_pptx(
         bar.line.fill.background()
         _textbox(slide, heading, 0.6, 0.35, 12.1, 0.8, size=26, bold=True)
         return slide
-
-    data = chart_series(chart, table.get("columns", []), table.get("rows", []))
-    if data and chart:
-        slide = new_slide(title)
-        cats, series = data
-        chart_data = CategoryChartData()
-        chart_data.categories = cats
-        for name, values in (
-            list(series.items())[:1] if chart.get("type") == "pie" else series.items()
-        ):
-            chart_data.add_series(_pretty(name), values)
-        kind = _PPT_CHART.get(chart.get("type", "bar"), XL_CHART_TYPE.COLUMN_CLUSTERED)
-        frame = slide.shapes.add_chart(kind, PptInches(0.6), PptInches(1.3), PptInches(12.1),
-                                       PptInches(5.2), chart_data)  # fmt: skip
-        native = frame.chart
-        native.has_legend = len(series) > 1 or chart.get("type") == "pie"
-        if native.has_legend:
-            native.legend.position = XL_LEGEND_POSITION.BOTTOM
-            native.legend.include_in_layout = False
-        if chart.get("type") != "pie":
-            for k, plot_series in enumerate(native.plots[0].series):
-                fmt = plot_series.format
-                hex_ = ["4F46E5", "0D9488", "EA580C", "DB2777", "CA8A04", "2563EB"][k % 6]
-                if chart.get("type") == "line":
-                    fmt.line.color.rgb = PptColor.from_string(hex_)
-                else:
-                    fmt.fill.solid()
-                    fmt.fill.fore_color.rgb = PptColor.from_string(hex_)
 
     if styled.columns and styled.rows:
         numeric = _numeric(styled)

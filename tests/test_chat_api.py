@@ -500,7 +500,7 @@ def test_excel_request_gives_a_styled_workbook(
     assert ws.freeze_panes == "A2"
     assert ws.max_row == 5  # header + 4 regions, nothing else
     assert all("North leads" not in str(c.value) for row in ws.iter_rows() for c in row)
-    assert len(ws._charts) == 1  # type: ignore[attr-defined]  # native Excel chart
+    assert len(ws._charts) == 0  # type: ignore[attr-defined]  # the table only, no chart
 
     other = signup(client, "spy@other.com", workspace="Other")
     assert (

@@ -1,12 +1,10 @@
-"""A PDF of an answer's table: a title, the chart and the table (no response text)."""
+"""A PDF of an answer's table: a title and the table (charts export as PNG)."""
 
-import io
 from datetime import date, datetime
 from typing import Any
 
 from fpdf import FPDF
 
-from app.charts import render_chart_png
 from app.exporting import _pretty, answer_title, is_id_like, summable_columns
 from app.styling import ExportStyle, apply_style, color
 
@@ -99,18 +97,6 @@ def build_answer_pdf(
     pdf.set_text_color(*INK)
     pdf.multi_cell(width, 8, _t(title))
     pdf.ln(4)
-
-    # The chart (bar, line or pie), drawn by code from the original answer.
-    png = render_chart_png(
-        chart, table.get("columns", []), all_rows,
-        y_label=_pretty(chart["y"]) if chart else "",
-    )  # fmt: skip
-    if png:
-        chart_h = width * 4.6 / 9.0
-        if pdf.get_y() + chart_h > pdf.h - 20:
-            pdf.add_page()
-        pdf.image(io.BytesIO(png), x=pdf.l_margin, w=width)
-        pdf.ln(4)
 
     # The table: widths follow the content, long text is cut to fit.
     if columns:

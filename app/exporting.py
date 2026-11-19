@@ -1,4 +1,4 @@
-"""Styled Excel workbooks for answers: title, summary, formatted table, native chart."""
+"""Styled Excel workbooks of an answer's table (the table only: charts export as PNG)."""
 
 import io
 import re
@@ -6,7 +6,6 @@ from datetime import date, datetime
 from typing import Any
 
 from openpyxl import Workbook
-from openpyxl.chart import BarChart, LineChart, PieChart, Reference
 from openpyxl.formatting.rule import DataBarRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -204,28 +203,6 @@ def build_answer_workbook(
         # +5 leaves room for the filter arrow next to the header text.
         longest = max([len(_pretty(name)) + 5] + [len(str(r[j - 1])) + 2 for r in rows[:500]])
         ws.column_dimensions[get_column_letter(j)].width = min(max(10, longest), 60)
-
-    # A native Excel chart, editable like any other.
-    if chart and rows and chart.get("x") in columns and chart.get("y") in columns:
-        x, y = columns.index(chart["x"]) + 1, columns.index(chart["y"]) + 1
-        kind = chart.get("type")
-        excel_chart: BarChart | LineChart | PieChart
-        if kind == "line":
-            excel_chart = LineChart()
-        elif kind == "pie":
-            excel_chart = PieChart()
-        else:
-            excel_chart = BarChart()
-            excel_chart.type = "col"
-        excel_chart.title = title[:80]
-        data = Reference(ws, min_col=y, min_row=header_row, max_row=last_row)
-        cats = Reference(ws, min_col=x, min_row=header_row + 1, max_row=last_row)
-        excel_chart.add_data(data, titles_from_data=True)
-        excel_chart.set_categories(cats)
-        excel_chart.height, excel_chart.width = 9, 18
-        if not isinstance(excel_chart, PieChart):
-            excel_chart.legend = None
-        ws.add_chart(excel_chart, f"{get_column_letter(len(columns) + 2)}{header_row}")
 
     ws.print_title_rows = f"{header_row}:{header_row}"
     ws.page_setup.orientation = "landscape" if len(columns) > 4 else "portrait"

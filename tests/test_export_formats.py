@@ -101,7 +101,7 @@ def test_csv_follows_the_formatting() -> None:
     assert "'=cmd()" in evil.decode("utf-8-sig") and "'-5" not in evil.decode("utf-8-sig")
 
 
-def test_word_report_has_chart_and_formatted_table() -> None:
+def test_word_file_has_only_the_formatted_table() -> None:
     style = ExportStyle(
         header_color="green",
         highlights=[Highlight(column="region", op="=", value="North", color="yellow")],
@@ -109,7 +109,7 @@ def test_word_report_has_chart_and_formatted_table() -> None:
     doc = Document(io.BytesIO(build_answer_docx(**COMMON, style=style)))
     assert doc.paragraphs[0].text == "Revenue by region"
     assert all("North leads" not in p.text for p in doc.paragraphs)  # no response text
-    assert len(doc.inline_shapes) == 1  # the chart picture
+    assert len(doc.inline_shapes) == 0  # no chart: charts export as PNG
     table = doc.tables[0]
     assert [c.text for c in table.rows[0].cells] == ["region", "Total revenue"]
     assert table.rows[1].cells[0].text == "North"
@@ -118,17 +118,15 @@ def test_word_report_has_chart_and_formatted_table() -> None:
     assert 'w:fill="FEF9C3"' in table.rows[1].cells[0]._tc.xml  # North in yellow
 
 
-def test_powerpoint_has_a_native_chart_and_data_slides() -> None:
+def test_powerpoint_has_only_table_slides() -> None:
     rows = [[f"Region {i}", float(i)] for i in range(30)]
     deck = Presentation(io.BytesIO(build_answer_pptx(
         **{**COMMON, "table": {"columns": TABLE["columns"], "rows": rows}},
         style=ExportStyle(summary_rows=["average"]),
     )))  # fmt: skip
     slides = list(deck.slides)
-    assert len(slides) == 1 + 3  # the chart, then 30 rows over 3 slides of 12
-    charts = [s for s in slides[0].shapes if s.has_chart]
-    assert len(charts) == 1  # editable in PowerPoint, not a picture
-    assert list(charts[0].chart.plots[0].categories)[:2] == ["Region 0", "Region 1"]
+    assert len(slides) == 3  # 30 rows over 3 slides of 12, no chart slide
+    assert not any(shape.has_chart for s in slides for shape in s.shapes)
     last_table = next(s for s in slides[-1].shapes if s.has_table).table
     assert last_table.cell(len(last_table.rows) - 1, 0).text == "Average"
     assert last_table.cell(len(last_table.rows) - 1, 1).text == "14.50"
