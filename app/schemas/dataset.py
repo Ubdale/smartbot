@@ -42,6 +42,46 @@ class UploadOut(DatasetOut):
     detected_encoding: str | None
 
 
+class ChangesOut(BaseModel):
+    """What a new version changed, compared with the one before it."""
+
+    key: str | None  # the column rows were matched by
+    added: int
+    removed: int
+    changed: int
+    rows_before: int
+    rows_after: int
+
+
+class VersionOut(BaseModel):
+    dataset: DatasetOut
+    changes: ChangesOut
+
+
+class IssueOut(BaseModel):
+    id: str
+    severity: str  # high | medium | low
+    title: str
+    column: str | None
+    rows: int
+    detail: str
+    examples: list[str]
+    fixable: bool
+    fix_label: str | None
+
+
+class DoctorOut(BaseModel):
+    dataset_id: str
+    version: int
+    summary: str
+    issues: list[IssueOut]
+
+
+class FixIn(BaseModel):
+    # Issue ids from the doctor's report; empty = every fixable issue.
+    issue_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
 class PreviewOut(BaseModel):
     dataset_id: str
     columns: list[str]

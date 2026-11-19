@@ -1,17 +1,20 @@
 """Upload, list, inspect, preview and delete datasets. Everything is workspace-scoped."""
 
 import logging
+import shutil
 import threading
 import uuid
+from datetime import date
 from pathlib import Path
 from typing import Annotated, Literal
 
+import duckdb
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
 from app import audit, learning
-from app.api.deps import AppSettings, CurrentUser, DbSession, not_found, workspace_scoped
+from app.api.deps import AppSettings, CurrentUser, DbSession, Today, not_found, workspace_scoped
 from app.connectors.csv_xlsx import (
     IMAGE_MIME,
     IngestError,
@@ -20,21 +23,28 @@ from app.connectors.csv_xlsx import (
     ingest_file,
     pdf_is_mostly_tables,
 )
-from app.connectors.profiling import preview_parquet
+from app.connectors.profiling import preview_parquet, profile_parquet
 from app.core.config import Settings
 from app.documents.ingest import DOCUMENT_FORMATS, ingest_document, load_passages
 from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
 from app.llm.embeddings import get_embedder
 from app.llm.factory import make_vision_provider
 from app.models import Dataset, GlossaryTerm, UsageEvent, User
+from app.query.compare import compare_versions, comparison_counts
+from app.query.doctor import Issue, apply_fixes, diagnose, summarize
 from app.query.retrieval import column_tag, topic_texts
 from app.schemas.dataset import (
+    ChangesOut,
     DatasetOut,
     DatasetSummary,
+    DoctorOut,
+    FixIn,
     GlossaryTermIn,
     GlossaryTermOut,
+    IssueOut,
     PreviewOut,
     UploadOut,
+    VersionOut,
 )
 from app.storage import PARQUET_NAME, DatasetStorage, StorageError, get_storage
 from app.vectors import get_vectors
@@ -295,6 +305,133 @@ def preview_dataset(
     ds = _get_dataset(db, user, dataset_id)
     columns, rows = preview_parquet(require_parquet(settings, ds), limit)
     return PreviewOut(dataset_id=ds.id, columns=columns, rows=rows, row_count=ds.row_count)
+
+
+# --- versions: "what changed?" and the data doctor's fixes ------------------------------
+
+
+def save_new_version(
+    settings: Settings, db: DbSession, user: User, ds: Dataset, new_parquet: Path,
+    *, original: Path | None = None, action: str,
+) -> ChangesOut:  # fmt: skip
+    """Make `new_parquet` the dataset's data (the old data is kept as the previous
+    version) and say what changed."""
+    storage = _storage(settings)
+    try:
+        storage.replace_data(ds.workspace_id, ds.id, new_parquet, original)
+        current = storage.ensure_local(ds.workspace_id, ds.id)
+        previous = storage.ensure_previous(ds.workspace_id, ds.id)
+    except StorageError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    if current is None or previous is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Couldn't save the new version.")
+    profile = profile_parquet(current)
+    ds.row_count = profile.row_count
+    ds.columns = [c.to_dict() for c in profile.columns]
+    ds.version += 1
+    audit.record(db, user, action, target_type="dataset", target_id=ds.id, version=ds.version)
+    db.commit()
+    _prepare_search(settings, ds)
+    return ChangesOut(**comparison_counts(compare_versions(previous, current)))
+
+
+@router.post("/{dataset_id}/versions", response_model=VersionOut)
+async def upload_new_version(
+    dataset_id: str,
+    file: Annotated[UploadFile, File(description="The new version of the same table")],
+    user: CurrentUser,
+    db: DbSession,
+    settings: AppSettings,
+    vision: Annotated[LLMProvider | None, Depends(get_vision_llm)],
+    sheet: Annotated[str | None, Form()] = None,
+) -> VersionOut:
+    """Replace a table's data with a newer file (e.g. this week's export). The previous
+    version is kept, so you can ask "what changed?"."""
+    ds = _get_dataset(db, user, dataset_id)
+    if ds.kind != "table":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "New versions work for tables only.")
+    filename = Path(file.filename or "").name
+    fmt = detect_format(filename)
+    if fmt is None:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Unsupported file type.")
+    folder = _storage(settings).dataset_dir(ds.workspace_id, ds.id) / "incoming"
+    shutil.rmtree(folder, ignore_errors=True)
+    folder.mkdir(parents=True)
+    try:
+        original = folder / f"original.{fmt}"
+        size = await _save_upload(file, original, settings.max_upload_mb * 1024 * 1024, settings)
+        if size == 0:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "The file is empty.")
+        calls: list[LLMCall] = []
+        transcribe = _transcriber(vision, calls) if fmt in IMAGE_MIME or fmt == "pdf" else None
+        out = folder / PARQUET_NAME
+        try:
+            table = await run_in_threadpool(ingest_file, original, fmt, out, sheet=sheet,
+                                            transcribe=transcribe)  # fmt: skip
+        except IngestError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        ds.original_filename = filename[:255]
+        ds.file_format = fmt
+        ds.sheet_name = table.sheet_name
+        ds.size_bytes = size
+        ds.extraction = table.extraction
+        changes = await run_in_threadpool(
+            save_new_version, settings, db, user, ds, out, original=original,
+            action="dataset.new_version",
+        )  # fmt: skip
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+    return VersionOut(dataset=DatasetOut.model_validate(ds), changes=changes)
+
+
+def run_doctor(settings: Settings, ds: Dataset, today: date) -> tuple[list[Issue], Path]:
+    if ds.kind != "table":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "The data doctor checks tables.")
+    path = require_parquet(settings, ds)
+    return diagnose(path, ds.columns, today), path
+
+
+@router.get("/{dataset_id}/doctor", response_model=DoctorOut)
+def dataset_doctor(
+    dataset_id: str, user: CurrentUser, db: DbSession, settings: AppSettings, today: Today
+) -> DoctorOut:
+    """Problems in the data (duplicates, spellings, blanks, ...), most important first."""
+    ds = _get_dataset(db, user, dataset_id)
+    issues, _ = run_doctor(settings, ds, today)
+    return DoctorOut(dataset_id=ds.id, version=ds.version, summary=summarize(issues, ds.name),
+                     issues=[IssueOut(**i.as_dict()) for i in issues])  # fmt: skip
+
+
+def fix_dataset(
+    settings: Settings, db: DbSession, user: User, ds: Dataset, today: date, issue_ids: list[str]
+) -> tuple[list[Issue], ChangesOut]:
+    """Apply the safe fixes for these issues (all fixable ones if empty) as a new version."""
+    issues, path = run_doctor(settings, ds, today)
+    chosen = [i for i in issues if i.fix and (not issue_ids or i.id in issue_ids)]
+    if not chosen:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "There's nothing to fix automatically.")
+    folder = _storage(settings).dataset_dir(ds.workspace_id, ds.id)
+    out = folder / "fixed.parquet"
+    columns = [str(c["name"]) for c in ds.columns]
+    try:
+        apply_fixes(path, out, [i.fix for i in chosen if i.fix], columns)
+    except (ValueError, duckdb.Error) as exc:
+        out.unlink(missing_ok=True)
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"Couldn't apply the fixes: {exc}"
+        ) from exc
+    changes = save_new_version(settings, db, user, ds, out, action="dataset.fixed")
+    return chosen, changes
+
+
+@router.post("/{dataset_id}/doctor/fix", response_model=VersionOut)
+def apply_doctor_fixes(
+    dataset_id: str, body: FixIn, user: CurrentUser, db: DbSession, settings: AppSettings,
+    today: Today,
+) -> VersionOut:  # fmt: skip
+    ds = _get_dataset(db, user, dataset_id)
+    _fixed, changes = fix_dataset(settings, db, user, ds, today, body.issue_ids)
+    return VersionOut(dataset=DatasetOut.model_validate(ds), changes=changes)
 
 
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)

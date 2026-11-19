@@ -66,6 +66,8 @@ class AnswerOut(BaseModel):
     explanation: ExplanationOut
     summary_source: Literal["llm", "template"]
     reused: bool = False  # answered instantly from an identical earlier question
+    # Data doctor report: {"dataset_id", "version", "issues": [...]}, for the Fix buttons.
+    doctor: dict[str, Any] | None = None
 
 
 class SourceOut(BaseModel):

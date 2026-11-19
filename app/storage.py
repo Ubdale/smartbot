@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 PARQUET_NAME = "data.parquet"
+PREVIOUS_NAME = "previous.parquet"  # the version before the latest, for "what changed?"
 
 
 class StorageError(RuntimeError):
@@ -135,6 +136,39 @@ class DatasetStorage:
             log.exception("download from remote storage failed")
             raise StorageError("Couldn't load the dataset from storage. Try again.") from exc
         return path if found else None
+
+    def ensure_previous(self, workspace_id: str, dataset_id: str) -> Path | None:
+        """The previous version's local Parquet path, or None if there's no previous one."""
+        path = self.dataset_dir(workspace_id, dataset_id) / PREVIOUS_NAME
+        if path.exists():
+            return path
+        if self.remote is None:
+            return None
+        try:
+            found = self.remote.download(self._key(workspace_id, dataset_id, PREVIOUS_NAME), path)
+        except Exception as exc:
+            log.exception("download of previous version failed")
+            raise StorageError("Couldn't load the previous version. Try again.") from exc
+        return path if found else None
+
+    def replace_data(
+        self, workspace_id: str, dataset_id: str, new_parquet: Path, original: Path | None = None
+    ) -> None:
+        """Make `new_parquet` the current data; the current data becomes the previous
+        version. `original`: the new uploaded file, replacing the old one."""
+        folder = self.dataset_dir(workspace_id, dataset_id)
+        current = folder / PARQUET_NAME
+        if not current.exists() and self.ensure_local(workspace_id, dataset_id) is None:
+            raise StorageError("The current version is missing.")
+        os.replace(current, folder / PREVIOUS_NAME)
+        os.replace(new_parquet, current)
+        if original is not None:
+            for old in folder.glob("original.*"):
+                old.unlink(missing_ok=True)
+            os.replace(original, folder / original.name)
+        for stale in folder.glob("*.vec.npy"):  # search vectors of the old data
+            stale.unlink(missing_ok=True)
+        self.persist(workspace_id, dataset_id)
 
     def delete(self, workspace_id: str, dataset_id: str) -> None:
         shutil.rmtree(self.dataset_dir(workspace_id, dataset_id), ignore_errors=True)

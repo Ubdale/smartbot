@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app import audit, learning
-from app.api.datasets import require_parquet
+from app.api.datasets import _storage, fix_dataset, require_parquet, run_doctor
 from app.api.deps import AppSettings, CurrentUser, DbSession, Today, not_found, workspace_scoped
 from app.core import ratelimit
 from app.core.config import Settings
@@ -29,6 +29,8 @@ from app.llm.factory import get_llm, get_summary_llm
 from app.models import Conversation, Dataset, Message, UsageEvent, User
 from app.query.answer import Answer, answer_question
 from app.query.codegen import pandas_code
+from app.query.compare import compare_versions, describe_comparison
+from app.query.doctor import summarize
 from app.query.evidence import find_evidence
 from app.query.executor import PlanError
 from app.query.planner import history_messages
@@ -106,6 +108,7 @@ def _table_payload(a: Answer, ds: Dataset) -> dict[str, Any] | None:
             "cached": r.cached,
             "elapsed_ms": r.elapsed_ms,
             "data_note": AI_VISION_NOTE if ds.extraction == "ai_vision" else None,
+            "dataset_version": ds.version,
             # Table RAG: how names and topics were matched, and the matched rows (proof).
             "retrieval_notes": a.retrieval_notes,
             "topic_rows": {str(k): v[:5000] for k, v in a.topic_rows.items()},
@@ -231,6 +234,12 @@ def run_ask(
     fmt = requested_format(body.question)
     if fmt is not None and ds.kind == "table":
         return _file_reply(db, conv, body, previous, user, fmt)
+    if ds.kind == "table" and FIX_REQUEST.search(body.question) and _last_doctor(previous):
+        return _fix_reply(db, conv, body, ds, user, settings, today)
+    if ds.kind == "table" and DOCTOR_REQUEST.search(body.question):
+        return _doctor_reply(db, conv, body, ds, user, settings, today)
+    if ds.kind == "table" and CHANGES_REQUEST.search(body.question):
+        return _changes_reply(db, conv, body, ds, user, settings)
     if EXPORT_REQUEST.search(body.question) and ds.kind != "table":
         return _save_turn(
             db, conv, body,
@@ -378,6 +387,114 @@ def requested_format(question: str) -> str | None:
         if pattern.search(question):
             return fmt
     return "xlsx" if EXPORT_REQUEST.search(question) else None
+
+
+# "What changed since the last upload?", "compare with the previous version"
+CHANGES_REQUEST = re.compile(
+    r"\bwhat('?s|\s+has|\s+have|\s+is)?\s+(changed|different)\b|\bwhat('?s|\s+is)\s+new\b"
+    r"|\b(changes|differences?|diff)\b.{0,30}\b(since|from|between|compared|previous|last|old)"
+    r"|\bcompare\b.{0,40}\b(previous|last|old|earlier)\b|\bkya\s+(badla|change)",
+    re.I,
+)
+# "Check my data", "any problems?", "duplicates?", "data quality"
+DOCTOR_REQUEST = re.compile(
+    r"\bdata\s+(doctor|quality|health|issues?|problems?|errors?|check)\b"
+    r"|\bcheck\s+(my|the|this)\s+(data|file|sheet|table)\b"
+    r"|\b(any|find)\s+(problems?|issues?|errors?|mistakes?)\b"
+    r"|\bclean\s*(up)?\s+(my|the|this)\s+(data|file|sheet|table)\b"
+    r"|\b(duplicates?|inconsistent|spelling\s+(mistakes|errors))\b",
+    re.I,
+)
+# "Fix them" after a data doctor report
+FIX_REQUEST = re.compile(
+    r"^\W*(please\s+|ok\s+|yes\s+)?(fix|clean)(\s+(it|them|all|these|this|those|everything"
+    r"|the\s+(data|issues|problems)))?(\s+please)?\W*$",
+    re.I,
+)
+
+
+def _last_doctor(previous: list[tuple[Message, Message]]) -> dict[str, Any] | None:
+    for _q, a in reversed(previous[-3:]):
+        doctor = (a.answer or {}).get("doctor")
+        if doctor:
+            return dict(doctor)
+    return None
+
+
+def _report_payload(columns: list[str], rows: list[list[Any]], description: str, *,
+                    truncated: bool = False, doctor: dict[str, Any] | None = None,
+                    ) -> dict[str, Any]:  # fmt: skip
+    """A table answer computed by code (no plan): renders and exports like any other."""
+    return {
+        "table": {"columns": columns, "rows": rows, "truncated": truncated},
+        "chart": None,
+        "explanation": {"description": description, "sql": "", "params": [],
+                        "date_range": None, "plan": {}, "cached": False, "elapsed_ms": 0},
+        "summary_source": "template",
+        **({"doctor": doctor} if doctor else {}),
+    }  # fmt: skip
+
+
+def _doctor_reply(
+    db: Session, conv: Conversation, body: AskRequest, ds: Dataset, user: User,
+    settings: Settings, today: date,
+) -> AskResponse:  # fmt: skip
+    issues, _path = run_doctor(settings, ds, today)
+    rows = [[i.severity.capitalize(), i.title, i.column or "", i.rows,
+             "; ".join(i.examples[:3]), i.fix_label or ""] for i in issues]  # fmt: skip
+    payload = _report_payload(
+        ["Severity", "Problem", "Column", "Rows", "Examples", "Automatic fix"], rows,
+        f"Data doctor check of \u201c{ds.name}\u201d (version {ds.version}).",
+        doctor={"dataset_id": ds.id, "version": ds.version,
+                "issues": [i.as_dict() for i in issues]},
+    ) if issues else None  # fmt: skip
+    return _save_turn(db, conv, body, content=summarize(issues, ds.name), status_="answered",
+                      plan=None, payload=payload, calls=[], user=user)  # fmt: skip
+
+
+def _fix_reply(
+    db: Session, conv: Conversation, body: AskRequest, ds: Dataset, user: User,
+    settings: Settings, today: date,
+) -> AskResponse:  # fmt: skip
+    try:
+        fixed, changes = fix_dataset(settings, db, user, ds, today, [])
+    except HTTPException as exc:
+        return _save_turn(db, conv, body, content=str(exc.detail), status_="answered",
+                          plan=None, payload=None, calls=[], user=user)  # fmt: skip
+    done = "; ".join(i.fix_label or i.title for i in fixed)
+    content = (f"Done: {done}. Saved as version {ds.version} of \u201c{ds.name}\u201d "
+               f"({changes.rows_before:,} \u2192 {changes.rows_after:,} rows, "
+               f"{changes.changed:,} rows changed). The previous version is kept: ask "
+               "\u201cwhat changed?\u201d to see every change.")  # fmt: skip
+    return _save_turn(db, conv, body, content=content, status_="answered", plan=None,
+                      payload=None, calls=[], user=user)  # fmt: skip
+
+
+def _changes_reply(
+    db: Session, conv: Conversation, body: AskRequest, ds: Dataset, user: User,
+    settings: Settings,
+) -> AskResponse:  # fmt: skip
+    storage = _storage(settings)
+    previous = storage.ensure_previous(ds.workspace_id, ds.id)
+    if previous is None or ds.version < 2:
+        return _save_turn(
+            db, conv, body,
+            content=(f"\u201c{ds.name}\u201d has only one version so far. Upload the newer "
+                     "file with \u201cUpload new version\u201d on the Datasets page (for "
+                     "example this week's export) and I'll show exactly what changed."),
+            status_="answered", plan=None, payload=None, calls=[], user=user,
+        )  # fmt: skip
+    comparison = compare_versions(previous, require_parquet(settings, ds))
+    columns = ["Change", comparison.key or "Row", "Column", "Before", "After"]
+    payload = None if comparison.nothing else _report_payload(
+        columns, comparison.rows,
+        f"Version {ds.version - 1} vs version {ds.version} of \u201c{ds.name}\u201d"
+        + (f", rows matched by {comparison.key}." if comparison.key else "."),
+        truncated=comparison.truncated,
+    )  # fmt: skip
+    summary = describe_comparison(comparison, ds.name)
+    return _save_turn(db, conv, body, content=summary, status_="answered", plan=None,
+                      payload=payload, calls=[], user=user)  # fmt: skip
 
 
 FORMAT_NAMES = {"xlsx": "Excel workbook", "pdf": "PDF report", "docx": "Word report",
@@ -774,6 +891,12 @@ def answer_evidence(
     if not reply.plan or "table" not in answer:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "This answer has no rows behind it.")
     ds = _dataset(db, user, conv.dataset_id)
+    if explanation.get("dataset_version") not in (None, ds.version):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "The data has a newer version since this answer. Ask the question again to see "
+            "its rows.",
+        )
     try:
         group_values = json.loads(group) if group else None
         if group_values is not None and not isinstance(group_values, list):
