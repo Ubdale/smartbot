@@ -66,6 +66,9 @@ class FallbackProvider(LLMProvider):
     def summarize(self, question: str, description: str, table_text: str) -> tuple[str, LLMCall]:
         return self._first_available(lambda p: p.summarize(question, description, table_text))
 
+    def transcribe_table(self, image: bytes, mime: str) -> tuple[list[list[str]], LLMCall]:
+        return self._first_available(lambda p: p.transcribe_table(image, mime))
+
 
 # Seconds to wait for a self-hosted model before switching to the backup provider.
 OLLAMA_TIMEOUT_WITH_FALLBACK = {False: 60.0, True: 30.0}  # {summary?: seconds}
@@ -174,3 +177,20 @@ def get_summary_llm(
     if settings.summary_model_name == settings.model_name and not settings.llm_fallback_provider:
         return planner
     return _build(settings, summary=True)
+
+
+def make_vision_provider(settings: Settings) -> LLMProvider | None:
+    """The model that reads tables from images, or None when none is configured."""
+    provider, model = settings.vision_provider_name, settings.vision_model_name
+    if provider == "gemini":
+        if not settings.gemini_api_key:
+            raise LLMUnavailableError("Reading images with Gemini needs GEMINI_API_KEY.")
+        return GeminiProvider(model, settings.gemini_api_key.get_secret_value(), timeout_seconds=90)
+    if provider == "ollama":
+        return OllamaProvider(
+            model,
+            settings.ollama_base_url,
+            timeout_seconds=settings.ollama_timeout_seconds,
+            api_key=settings.ollama_api_key.get_secret_value() if settings.ollama_api_key else None,
+        )
+    return None

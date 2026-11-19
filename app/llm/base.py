@@ -5,6 +5,7 @@ constrained to a JSON schema). `plan()` and `summarize()` are shared, so every
 provider gets the same prompts and the same validation.
 """
 
+import json
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from app.llm import prompts
 from app.schemas.query_plan import QueryPlan
 
 Role = Literal["system", "user", "assistant"]
+Purpose = Literal["plan", "summary", "vision", "answer"]
 
 
 @dataclass(frozen=True)
@@ -36,7 +38,7 @@ class Completion:
 class LLMCall:
     """One logged call, for the usage table."""
 
-    purpose: Literal["plan", "summary"]
+    purpose: Purpose
     provider: str
     model: str
     prompt_tokens: int
@@ -109,7 +111,41 @@ class LLMProvider(ABC):
         out = self.complete(messages, max_tokens=220)
         return out.text.strip(), self._call("summary", out, started, success=True)
 
-    def _call(self, purpose: Literal["plan", "summary"], out: Completion, started: float, *,
+    def complete_with_image(
+        self,
+        prompt: str,
+        image: bytes,
+        mime: str,
+        *,
+        json_schema: dict[str, Any] | None = None,
+        max_tokens: int = 4096,
+    ) -> Completion:
+        """One completion that looks at an image. Only vision-capable providers override it."""
+        raise LLMUnavailableError(f"The {self.name} model {self.model!r} can't read images.")
+
+    def transcribe_table(self, image: bytes, mime: str) -> tuple[list[list[str]], LLMCall]:
+        """Copy the table in an image into rows of text cells (first row = header).
+
+        The model only copies what it sees; code then types and checks the cells, and
+        the dataset is marked as AI-read so users know to verify it.
+        """
+        started = time.perf_counter()
+        out = self.complete_with_image(
+            prompts.TABLE_FROM_IMAGE,
+            image,
+            mime,
+            json_schema=prompts.TABLE_ROWS_SCHEMA,
+            max_tokens=8192,
+        )
+        call = self._call("vision", out, started, success=True)
+        try:
+            data = json.loads(out.text)
+            rows = [[("" if c is None else str(c)).strip() for c in r] for r in data["rows"]]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise LLMUnavailableError("The model couldn't read a table from this image.") from exc
+        return [r for r in rows if any(r)], call
+
+    def _call(self, purpose: Purpose, out: Completion, started: float, *,
               success: bool) -> LLMCall:  # fmt: skip
         latency = out.latency_ms or int((time.perf_counter() - started) * 1000)
         return LLMCall(

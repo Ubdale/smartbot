@@ -9,6 +9,7 @@ import csv
 import itertools
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -20,7 +21,15 @@ import pandas as pd
 from app.connectors.profiling import DatasetProfile, profile_parquet
 from app.query.sql import quote_ident, quote_literal
 
-FileFormat = Literal["csv", "tsv", "txt", "xlsx", "xls", "ods", "json", "parquet", "pdf"]
+FileFormat = Literal[
+    "csv", "tsv", "txt", "xlsx", "xls", "ods", "json", "parquet", "pdf", "png", "jpg", "webp"
+]
+IMAGE_MIME = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}
+MAX_SCANNED_PAGES = 5  # each page is one vision call; keep uploads under proxy time limits
+
+# Copies the table in an image into rows of text cells (an AI vision model, injected by
+# the API so this module stays free of LLM code). Raises IngestError when it can't.
+Transcriber = Callable[[bytes, str], list[list[str]]]
 
 SUFFIXES: dict[str, FileFormat] = {
     ".csv": "csv",
@@ -36,6 +45,10 @@ SUFFIXES: dict[str, FileFormat] = {
     ".ndjson": "json",
     ".parquet": "parquet",
     ".pdf": "pdf",
+    ".png": "png",
+    ".jpg": "jpg",
+    ".jpeg": "jpg",
+    ".webp": "webp",
 }
 SPREADSHEET_ENGINES = {"xlsx": "openpyxl", "xls": "calamine", "ods": "calamine"}
 MAX_PDF_PAGES = 300
@@ -55,6 +68,7 @@ class IngestResult:
     sheet_name: str | None
     sheet_names: list[str]
     encoding: str | None
+    extraction: str | None = None  # "ai_vision" when an AI model read the table from an image
 
 
 def detect_format(filename: str) -> FileFormat | None:
@@ -394,12 +408,56 @@ def pdf_tables(src: Path) -> tuple[list[PdfTable], int]:
     return tables, text_chars
 
 
-def _pdf_frame(src: Path, sheet: str | None) -> tuple[pd.DataFrame, str, list[str]]:
+def _rows_frame(rows: list[list[str]]) -> pd.DataFrame:
+    rows = [r for r in rows if any(c.strip() for c in r)]
+    if len(rows) < 2:
+        raise IngestError("No table found in the image.")
+    width = max(len(r) for r in rows)
+    raw = pd.DataFrame([[c or None for c in r] + [None] * (width - len(r)) for r in rows])
+    return frame_from_rows(raw)
+
+
+def _image_frame(image: bytes, mime: str, transcribe: Transcriber | None) -> pd.DataFrame:
+    if transcribe is None:
+        raise IngestError(
+            "Reading tables from images needs a vision model. Ask your admin to set "
+            "GEMINI_API_KEY (or VISION_PROVIDER)."
+        )
+    return _rows_frame(transcribe(image, mime))
+
+
+def _scanned_pdf_frame(src: Path, transcribe: Transcriber) -> pd.DataFrame:
+    """Render the first pages to images and let the vision model read the table."""
+    import io
+
+    import pypdfium2
+
+    rows: list[list[str]] = []
+    pdf = pypdfium2.PdfDocument(src)
+    try:
+        for index in range(min(len(pdf), MAX_SCANNED_PAGES)):
+            buf = io.BytesIO()
+            pdf[index].render(scale=2).to_pil().save(buf, format="PNG")
+            page_rows = [r for r in transcribe(buf.getvalue(), "image/png") if any(r)]
+            if rows and page_rows and page_rows[0] == rows[0]:
+                page_rows = page_rows[1:]  # header repeated on the next page
+            rows.extend(page_rows)
+    finally:
+        pdf.close()
+    return _rows_frame(rows)
+
+
+def _pdf_frame(
+    src: Path, sheet: str | None, transcribe: Transcriber | None = None
+) -> tuple[pd.DataFrame, str, list[str], str | None]:
     tables, text_chars = pdf_tables(src)
     if not tables:
         if text_chars == 0:
+            if transcribe is not None:
+                return _scanned_pdf_frame(src, transcribe), "Scanned pages", [], "ai_vision"
             raise IngestError(
-                "This PDF has no selectable text (it looks scanned). Upload the pages as images."
+                "This PDF has no selectable text (it looks scanned), and no vision model is set "
+                "up to read it."
             )
         raise IngestError("No tables found in this PDF.")
     names = [t.name for t in tables]
@@ -411,18 +469,22 @@ def _pdf_frame(src: Path, sheet: str | None) -> tuple[pd.DataFrame, str, list[st
         chosen = names.index(sheet)
     else:  # the biggest table by default
         chosen = max(range(len(tables)), key=lambda i: len(tables[i].rows) * len(tables[i].rows[0]))
-    rows = tables[chosen].rows
-    width = max(len(r) for r in rows)
-    raw = pd.DataFrame([[c or None for c in r] + [None] * (width - len(r)) for r in rows])
-    return frame_from_rows(raw), names[chosen], names
+    return _rows_frame(tables[chosen].rows), names[chosen], names, None
 
 
 def _first_line(exc: Exception) -> str:
     return str(exc).strip().splitlines()[0][:300] if str(exc).strip() else type(exc).__name__
 
 
-def ingest_file(src: Path, fmt: FileFormat, out: Path, sheet: str | None = None) -> IngestResult:
+def ingest_file(
+    src: Path,
+    fmt: FileFormat,
+    out: Path,
+    sheet: str | None = None,
+    transcribe: Transcriber | None = None,
+) -> IngestResult:
     """Convert `src` to Parquet at `out` and profile it. Raises IngestError for bad input."""
+    extraction: str | None = None
     encoding: str | None = None
     sheet_name: str | None = None
     sheet_names: list[str] = []
@@ -432,8 +494,11 @@ def ingest_file(src: Path, fmt: FileFormat, out: Path, sheet: str | None = None)
         df, sheet_name, sheet_names = _spreadsheet_frame(src, fmt, sheet)
         write_frame(df, out)
     elif fmt == "pdf":
-        df, sheet_name, sheet_names = _pdf_frame(src, sheet)
+        df, sheet_name, sheet_names, extraction = _pdf_frame(src, sheet, transcribe)
         write_frame(df, out)
+    elif fmt in IMAGE_MIME:
+        write_frame(_image_frame(src.read_bytes(), IMAGE_MIME[fmt], transcribe), out)
+        extraction = "ai_vision"
     elif fmt == "json":
         write_frame(_json_frame(src), out)
     elif fmt == "parquet":
@@ -443,4 +508,4 @@ def ingest_file(src: Path, fmt: FileFormat, out: Path, sheet: str | None = None)
 
     profile = profile_parquet(out)
     _check_shape(profile.row_count, len(profile.columns))
-    return IngestResult(profile, sheet_name, sheet_names, encoding)
+    return IngestResult(profile, sheet_name, sheet_names, encoding, extraction)

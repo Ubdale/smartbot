@@ -1,5 +1,6 @@
 """Local LLM via Ollama (free, unlimited). Structured output uses Ollama's `format` schema."""
 
+import base64
 import contextlib
 import time
 from typing import Any
@@ -37,9 +38,28 @@ class OllamaProvider(LLMProvider):
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = 512,
     ) -> Completion:
+        chat = [{"role": m.role, "content": m.content} for m in messages]
+        return self._chat(chat, json_schema, max_tokens)
+
+    def complete_with_image(
+        self,
+        prompt: str,
+        image: bytes,
+        mime: str,
+        *,
+        json_schema: dict[str, Any] | None = None,
+        max_tokens: int = 4096,
+    ) -> Completion:
+        """Needs a vision model (e.g. qwen2.5vl). Slow on a CPU-only server."""
+        chat = [{"role": "user", "content": prompt, "images": [base64.b64encode(image).decode()]}]
+        return self._chat(chat, json_schema, max_tokens)
+
+    def _chat(
+        self, chat: list[dict[str, Any]], json_schema: dict[str, Any] | None, max_tokens: int
+    ) -> Completion:
         payload: dict[str, Any] = {
             "model": self.model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": chat,
             "stream": False,
             "options": {"temperature": 0, "num_predict": max_tokens},
         }

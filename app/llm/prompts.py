@@ -161,3 +161,20 @@ def summary_messages(question: str, description: str, table_text: str) -> list["
             f"Question: {question}\nWhat was computed: {description}\n\nResult:\n{table_text}",
         ),
     ]
+
+
+TABLE_FROM_IMAGE = """Copy the table in this image into rows of cells, exactly as shown.
+- The first row is the header row (column names). If the table has title lines above the
+  header, leave them out.
+- Copy every number exactly as printed (keep commas, decimals, signs and units). Never
+  calculate, round, guess or fill in values; an empty or unreadable cell is "".
+- One inner list per table row, cells left to right, same number of cells in every row.
+- If there are several tables, copy the largest one. If there is no table, return no rows."""
+
+TABLE_ROWS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}
+    },
+    "required": ["rows"],
+}

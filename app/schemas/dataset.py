@@ -28,6 +28,8 @@ class DatasetSummary(BaseModel):
     size_bytes: int
     row_count: int
     version: int
+    kind: str  # "table" | "document"
+    extraction: str | None  # "ai_vision": read from an image by AI, please check
     created_at: datetime
 
 

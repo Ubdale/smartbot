@@ -4,15 +4,17 @@ import uuid
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import AppSettings, CurrentUser, DbSession, not_found, workspace_scoped
-from app.connectors.csv_xlsx import IngestError, detect_format, ingest_file
+from app.connectors.csv_xlsx import IMAGE_MIME, IngestError, Transcriber, detect_format, ingest_file
 from app.connectors.profiling import preview_parquet
 from app.core.config import Settings
-from app.models import Dataset, User
+from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
+from app.llm.factory import make_vision_provider
+from app.models import Dataset, UsageEvent, User
 from app.schemas.dataset import DatasetOut, DatasetSummary, PreviewOut, UploadOut
 from app.storage import PARQUET_NAME, DatasetStorage, StorageError, get_storage
 
@@ -35,6 +37,29 @@ def require_parquet(settings: Settings, ds: Dataset) -> Path:
     if path is None:
         raise HTTPException(status.HTTP_410_GONE, "The dataset's data file is missing.")
     return path
+
+
+def get_vision_llm(settings: AppSettings) -> LLMProvider | None:
+    """The model that reads tables from images; None when none is configured."""
+    try:
+        return make_vision_provider(settings)
+    except LLMUnavailableError:
+        return None
+
+
+def _transcriber(vision: LLMProvider | None, calls: list[LLMCall]) -> Transcriber | None:
+    if vision is None:
+        return None
+
+    def transcribe(image: bytes, mime: str) -> list[list[str]]:
+        try:
+            rows, call = vision.transcribe_table(image, mime)
+        except LLMUnavailableError as exc:
+            raise IngestError(str(exc)) from exc
+        calls.append(call)
+        return rows
+
+    return transcribe
 
 
 def _too_large(settings: Settings) -> HTTPException:
@@ -71,6 +96,7 @@ async def upload_dataset(
     user: CurrentUser,
     db: DbSession,
     settings: AppSettings,
+    vision: Annotated[LLMProvider | None, Depends(get_vision_llm)],
     name: Annotated[str | None, Form(max_length=200)] = None,
     sheet: Annotated[
         str | None, Form(description="Spreadsheet sheet or PDF table (default: first/biggest)")
@@ -85,8 +111,8 @@ async def upload_dataset(
     if fmt is None:
         raise HTTPException(
             status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            "Unsupported file type. Use .csv, .tsv, .txt, .xlsx, .xls, .ods, .json, .parquet or "
-            ".pdf.",
+            "Unsupported file type. Use .csv, .tsv, .txt, .xlsx, .xls, .ods, .json, .parquet, "
+            ".pdf, or an image (.png, .jpg, .webp).",
         )
 
     storage = _storage(settings)
@@ -97,10 +123,18 @@ async def upload_dataset(
         size = await _save_upload(file, original, max_bytes, settings)
         if size == 0:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "The file is empty.")
+        vision_calls: list[LLMCall] = []
+        needs_vision = fmt in IMAGE_MIME or fmt == "pdf"  # images; scanned PDFs
+        transcribe = _transcriber(vision, vision_calls) if needs_vision else None
         try:
             # CPU-bound (parsing, Parquet, profiling): keep the event loop free for others.
             result = await run_in_threadpool(
-                ingest_file, original, fmt, folder / PARQUET_NAME, sheet=sheet
+                ingest_file,
+                original,
+                fmt,
+                folder / PARQUET_NAME,
+                sheet=sheet,
+                transcribe=transcribe,
             )
         except IngestError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
@@ -120,8 +154,23 @@ async def upload_dataset(
             size_bytes=size,
             row_count=result.profile.row_count,
             columns=[c.to_dict() for c in result.profile.columns],
+            extraction=result.extraction,
         )
         db.add(ds)
+        for call in vision_calls:
+            db.add(
+                UsageEvent(
+                    workspace_id=user.workspace_id,
+                    user_id=user.id,
+                    purpose=call.purpose,
+                    provider=call.provider,
+                    model=call.model,
+                    prompt_tokens=call.prompt_tokens,
+                    completion_tokens=call.completion_tokens,
+                    latency_ms=call.latency_ms,
+                    success=call.success,
+                )
+            )
         db.commit()
     except BaseException:
         db.rollback()

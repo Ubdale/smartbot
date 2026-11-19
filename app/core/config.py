@@ -9,6 +9,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LLMProviderName = Literal["ollama", "gemini", "groq"]
 StorageBackend = Literal["local", "s3"]
+VisionProviderName = Literal["gemini", "ollama", "none"]
+DEFAULT_VISION_MODELS: dict[str, str] = {"gemini": "gemini-2.5-flash", "ollama": "qwen2.5vl:7b"}
 
 # Used when LLM_MODEL is empty, so switching LLM_PROVIDER alone is enough.
 DEFAULT_MODELS: dict[str, str] = {
@@ -51,6 +53,9 @@ class Settings(BaseSettings):
     llm_summary_model: str | None = None  # empty = DEFAULT_SUMMARY_MODELS, else llm_model
     # Used when the main provider fails or hits its free-tier limit (e.g. gemini -> groq).
     llm_fallback_provider: LLMProviderName | None = None
+    # Reads tables from images and scanned PDFs. Empty = gemini when GEMINI_API_KEY is set.
+    vision_provider: VisionProviderName | None = None
+    vision_model: str | None = None
     ollama_base_url: str = "http://localhost:11434"
     # Layers to put on the GPU. 0 = CPU only (use on laptops with small GPUs, which
     # otherwise crash with "CUDA out of memory"). Unset = let Ollama decide.
@@ -122,6 +127,17 @@ class Settings(BaseSettings):
     @property
     def model_name(self) -> str:
         return self.llm_model or DEFAULT_MODELS[self.llm_provider]
+
+    @property
+    def vision_provider_name(self) -> VisionProviderName:
+        if self.vision_provider:
+            return self.vision_provider
+        return "gemini" if self.gemini_api_key else "none"
+
+    @property
+    def vision_model_name(self) -> str:
+        provider = self.vision_provider_name
+        return self.vision_model or DEFAULT_VISION_MODELS.get(provider, "")
 
     @property
     def summary_model_name(self) -> str:

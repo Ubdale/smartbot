@@ -81,5 +81,5 @@ plugins = ["pydantic.mypy"]
 files = ["app", "tests", "scripts", "alembic/env.py"]
 
 [[tool.mypy.overrides]]
-module = ["alembic.*", "xlwt"]
+module = ["alembic.*", "xlwt", "pypdfium2"]
 ignore_missing_imports = true

@@ -49,6 +49,8 @@ class ExplanationOut(BaseModel):
     plan: dict[str, Any]
     cached: bool
     elapsed_ms: int
+    # A caveat about the data itself, e.g. the table was read from an image by AI.
+    data_note: str | None = None
 
 
 class AnswerOut(BaseModel):

@@ -49,7 +49,13 @@ def _dataset(db: DbSession, user: User, dataset_id: str) -> Dataset:
     return ds
 
 
-def _answer_payload(a: Answer) -> dict[str, Any] | None:
+AI_VISION_NOTE = (
+    "This table was read from an image by AI. The calculation is exact, but check the "
+    "dataset preview to make sure the numbers were read correctly."
+)
+
+
+def _answer_payload(a: Answer, ds: Dataset) -> dict[str, Any] | None:
     if a.status != "answered" or a.result is None or a.validated is None:
         return None
     r, vp = a.result, a.validated
@@ -69,6 +75,7 @@ def _answer_payload(a: Answer) -> dict[str, Any] | None:
             "plan": vp.plan.model_dump(mode="json"),
             "cached": r.cached,
             "elapsed_ms": r.elapsed_ms,
+            "data_note": AI_VISION_NOTE if ds.extraction == "ai_vision" else None,
         },
         "summary_source": a.summary_source,
     }
@@ -136,7 +143,7 @@ def ask(
         content=result.summary,
         status=result.status,
         plan=result.validated.plan.model_dump(mode="json") if result.validated else None,
-        answer=_answer_payload(result),
+        answer=_answer_payload(result, ds),
         position=position + 1,
         created_at=now,
     )

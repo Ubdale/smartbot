@@ -28,3 +28,8 @@ class Dataset(IdMixin, TimestampMixin, Base):
     columns: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
     # Bumped whenever the data changes; part of the query-cache key (Milestone 4).
     version: Mapped[int] = mapped_column(Integer, default=1)
+    # "table" (questions computed with SQL) or "document" (answers quoted from text).
+    kind: Mapped[str] = mapped_column(String(20), default="table", server_default="table")
+    # How the table was obtained when it wasn't read directly, e.g. "ai_vision" for a
+    # table an AI model read from an image. Shown to users as "please check".
+    extraction: Mapped[str | None] = mapped_column(String(20), nullable=True)

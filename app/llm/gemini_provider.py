@@ -1,5 +1,6 @@
 """Google Gemini (free tier) over its REST API. Structured output via responseJsonSchema."""
 
+import base64
 import re
 import time
 from typing import Any
@@ -62,8 +63,24 @@ class GeminiProvider(LLMProvider):
         json_schema: dict[str, Any] | None = None,
         max_tokens: int = 512,
     ) -> Completion:
+        return self._send(self._body(messages, json_schema, max_tokens))
+
+    def complete_with_image(
+        self,
+        prompt: str,
+        image: bytes,
+        mime: str,
+        *,
+        json_schema: dict[str, Any] | None = None,
+        max_tokens: int = 4096,
+    ) -> Completion:
+        body = self._body([ChatMessage("user", prompt)], json_schema, max_tokens)
+        image_part = {"inline_data": {"mime_type": mime, "data": base64.b64encode(image).decode()}}
+        body["contents"][0]["parts"].insert(0, image_part)
+        return self._send(body)
+
+    def _send(self, body: dict[str, Any]) -> Completion:
         url = f"{API}/models/{self.model}:generateContent"
-        body = self._body(messages, json_schema, max_tokens)
         started = time.perf_counter()
 
         for attempt in range(2):
