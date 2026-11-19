@@ -34,6 +34,7 @@ def settings(tmp_path: Path) -> Settings:
         database_url=TEST_DATABASE_URL or f"sqlite:///{(tmp_path / 'test.db').as_posix()}",
         data_dir=tmp_path / "data",
         secret_key="test-secret-key-that-is-long-enough-for-hs256",
+        questions_per_minute=0,  # tests ask many questions quickly; limits tested separately
     )
 
 
@@ -70,8 +71,12 @@ def app(settings: Settings, session_factory: sessionmaker[Session]) -> FastAPI:
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
+    from app.core.ratelimit import questions
+
+    questions.reset()
     with TestClient(app) as c:
         yield c
+    questions.reset()
 
 
 @dataclass

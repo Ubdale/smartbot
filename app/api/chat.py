@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app import learning
 from app.api.datasets import require_parquet
 from app.api.deps import AppSettings, CurrentUser, DbSession, Today, not_found, workspace_scoped
+from app.core import ratelimit
 from app.core.config import Settings
 from app.core.db import get_session_factory
 from app.documents.answer import DocumentAnswer, answer_document_question
@@ -125,6 +126,7 @@ def ask(
     summarizer: Annotated[LLMProvider, Depends(get_summary_llm)],
     today: Today,
 ) -> AskResponse:
+    ratelimit.questions.check(user.id, settings.questions_per_minute)
     return run_ask(body, user, db, settings, llm, summarizer, today)
 
 
@@ -144,6 +146,7 @@ def ask_stream(
     "reading"}, then {"type": "done", "response": AskResponse} or {"type": "error",
     "status": int, "detail": str}.
     """
+    ratelimit.questions.check(user.id, settings.questions_per_minute)
     events: queue.Queue[dict[str, Any] | None] = queue.Queue()
     user_id = user.id
 
