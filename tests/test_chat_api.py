@@ -531,3 +531,59 @@ def test_excel_before_any_answer_explains(
     use_llm(app, FakeLLM([]))
     reply = ask(client, acct, "give me an excel file", dataset_id=dataset_id).json()["reply"]
     assert "Ask me for the data first" in reply["content"]
+
+
+def test_excel_titles_ids_totals_and_about_sheet() -> None:
+    import io
+    from datetime import UTC, datetime
+
+    from openpyxl import load_workbook
+
+    from app.exporting import answer_title, build_answer_workbook
+
+    assert answer_title("Revenue by region", "x") == "Revenue by region"
+    assert (
+        answer_title(
+            "if i tell you to make a sheet which will have task of Sara would you do it?",
+            "Rows showing Summary, where Assignee is one of Sara; showing up to 50 rows.",
+        )
+        == "Rows showing Summary, where Assignee is one of Sara"
+    )
+
+    data = build_answer_workbook(
+        question="Revenue by region", summary="s", chart=None, dataset_name="d",
+        created_at=datetime.now(UTC),
+        table={"columns": ["region", "sum_revenue"],
+               "rows": [["North", 1500.5], ["South", 250.25]]},
+        explanation={"description": "Total revenue, by region.", "plan": {"metric": "sum"},
+                     "date_range": {"label": "2025", "start": "2025-01-01", "end": "2025-12-31"}},
+    )  # fmt: skip
+    wb = load_workbook(io.BytesIO(data))
+    ws = wb["Answer"]
+    assert ws["A8"].value == "Total"
+    assert ws["B8"].value == "=SUM(B6:B7)"  # a live Excel formula
+    assert ws.conditional_formatting  # data bars on the values
+    about = wb["How this was made"]
+    assert about["B4"].value == "2025: 2025-01-01 to 2025-12-31"
+
+    ids = build_answer_workbook(
+        question="q", summary="s", chart=None, dataset_name="d", created_at=datetime.now(UTC),
+        table={"columns": ["Issue id", "Story points"], "rows": [[40145, 3], [40146, 5]]},
+    )  # fmt: skip
+    ws = load_workbook(io.BytesIO(ids))["Answer"]
+    assert ws["A6"].number_format == "0"  # no "40,145" for identifiers
+
+
+def test_pdf_report(app: FastAPI, client: TestClient, acct: Account, dataset_id: str) -> None:
+    use_llm(app, FakeLLM([REVENUE_BY_REGION], summary="North leads — by far."))
+    reply = ask(client, acct, "Revenue by region", dataset_id=dataset_id).json()["reply"]
+    resp = client.get(f"/chat/messages/{reply['id']}/export.pdf", headers=acct.headers)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/pdf"
+    assert resp.content.startswith(b"%PDF")
+    assert 'filename="Revenue-by-region.pdf"' in resp.headers["content-disposition"]
+    other = signup(client, "spy2@other.com", workspace="Other")
+    assert (
+        client.get(f"/chat/messages/{reply['id']}/export.pdf", headers=other.headers).status_code
+        == 404
+    )

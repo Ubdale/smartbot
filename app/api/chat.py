@@ -26,6 +26,7 @@ from app.exporting import build_answer_workbook
 from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
 from app.llm.factory import get_llm, get_summary_llm
 from app.models import Conversation, Dataset, Message, UsageEvent, User
+from app.pdf_report import build_answer_pdf
 from app.query.answer import Answer, answer_question
 from app.query.codegen import pandas_code
 from app.query.planner import history_messages
@@ -530,6 +531,54 @@ def give_feedback(
     )
 
 
+def _export_parts(
+    db: DbSession, user: User, message_id: str
+) -> tuple[Message, Conversation, dict[str, Any], str, Dataset | None]:
+    reply = db.get(Message, message_id)
+    if reply is None or reply.role != "assistant":
+        raise not_found("Answer")
+    conv = _conversation(db, user, reply.conversation_id)  # checks it's the user's own
+    answer = reply.answer or {}
+    if answer.get("type", "table") != "table" or "table" not in answer:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This answer has no table to export.")
+    question = next((m for m in conv.messages if m.position == reply.position - 1), None)
+    return (
+        reply,
+        conv,
+        answer,
+        question.content if question else "AskData answer",
+        db.get(Dataset, conv.dataset_id),
+    )
+
+
+def _download(content: bytes, media_type: str, question: str, ext: str) -> Response:
+    name = re.sub(r"[^A-Za-z0-9]+", "-", question).strip("-")[:60] or "answer"
+    return Response(
+        content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{name}.{ext}"'},
+    )
+
+
+@router.get("/messages/{message_id}/export.pdf")
+def export_answer_pdf(message_id: str, user: CurrentUser, db: DbSession) -> Response:
+    """A PDF report of a table answer: title, summary, bar chart and table."""
+    reply, _conv, answer, question, ds = _export_parts(db, user, message_id)
+    content = build_answer_pdf(
+        question=question,
+        summary=reply.content,
+        table=answer["table"],
+        chart=answer.get("chart"),
+        dataset_name=ds.name if ds else "",
+        created_at=reply.created_at,
+        explanation=answer.get("explanation"),
+    )
+    audit.record(db, user, "answer.exported", target_type="message", target_id=reply.id,
+                 format="pdf")  # fmt: skip
+    db.commit()
+    return _download(content, "application/pdf", question, "pdf")
+
+
 @router.get("/messages/{message_id}/export.xlsx")
 def export_answer_xlsx(message_id: str, user: CurrentUser, db: DbSession) -> Response:
     """A styled Excel workbook of a table answer: title, summary, formatted table, chart."""
@@ -549,6 +598,7 @@ def export_answer_xlsx(message_id: str, user: CurrentUser, db: DbSession) -> Res
         chart=answer.get("chart"),
         dataset_name=ds.name if ds else "",
         created_at=reply.created_at,
+        explanation=answer.get("explanation"),
     )
     audit.record(db, user, "answer.exported", target_type="message", target_id=reply.id,
                  format="xlsx")  # fmt: skip
