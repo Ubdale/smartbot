@@ -79,6 +79,18 @@ class DocumentAnswerOut(BaseModel):
     sources: list[SourceOut]
 
 
+class CodeBlockOut(BaseModel):
+    language: str
+    code: str
+
+
+class CodeAnswerOut(BaseModel):
+    """Code that reproduces an earlier answer (generated from its plan, not by the model)."""
+
+    type: Literal["code"]
+    blocks: list[CodeBlockOut]
+
+
 class MessageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -86,7 +98,7 @@ class MessageOut(BaseModel):
     role: Literal["user", "assistant"]
     content: str
     status: Literal["answered", "clarification", "failed"] | None
-    answer: DocumentAnswerOut | AnswerOut | None
+    answer: CodeAnswerOut | DocumentAnswerOut | AnswerOut | None
     rating: int | None = None  # 1 helpful, -1 wrong
     created_at: datetime
 

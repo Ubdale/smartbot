@@ -3,6 +3,7 @@
 import json
 import logging
 import queue
+import re
 import threading
 from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime
@@ -25,6 +26,7 @@ from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
 from app.llm.factory import get_llm, get_summary_llm
 from app.models import Conversation, Dataset, Message, UsageEvent, User
 from app.query.answer import Answer, answer_question
+from app.query.codegen import pandas_code
 from app.query.planner import history_messages
 from app.schemas.chat import (
     AskRequest,
@@ -212,6 +214,20 @@ def run_ask(
     parquet = require_parquet(settings, ds)
     previous = list(pairwise(conv.messages)) if body.conversation_id else []
 
+    # Requests about the conversation itself, answered directly (no model call).
+    if CODE_REQUEST.search(body.question) and ds.kind == "table":
+        return _code_reply(db, conv, body, ds, previous, user)
+    if EXPORT_REQUEST.search(body.question):
+        return _save_turn(
+            db, conv, body,
+            content=(
+                "You can download any answer: use the ⬇ CSV button under its table and "
+                "⬇ PNG under its chart. Ask for “Python code” to get code that "
+                "recreates the latest answer."
+            ),
+            status_="answered", plan=None, payload=None, calls=[], user=user,
+        )  # fmt: skip
+
     definition = learning.parse_definition(body.question)
     if definition is not None:
         # "sales means revenue": remember it for this file. No model needed.
@@ -304,6 +320,69 @@ def run_ask(
     return _save_turn(
         db, conv, body, content=content, status_=status_, plan=plan, payload=payload,
         calls=calls, user=user,
+    )  # fmt: skip
+
+
+CODE_REQUEST = re.compile(
+    r"\b(python|pandas|sql|script|jupyter|notebook)\b|\b(the|this|some|write|in|give)\s+code\b",
+    re.I,
+)
+EXPORT_REQUEST = re.compile(r"\b(download|export)\b", re.I)
+
+
+def _code_reply(
+    db: Session,
+    conv: Conversation,
+    body: AskRequest,
+    ds: Dataset,
+    previous: list[tuple[Message, Message]],
+    user: User,
+) -> AskResponse:
+    """Code that reproduces the latest computed answer, generated from its plan."""
+    last = next(
+        (
+            (q, a)
+            for q, a in reversed(previous)
+            if q.role == "user" and a.role == "assistant" and a.plan and a.answer
+        ),
+        None,
+    )
+    if last is None:
+        return _save_turn(
+            db, conv, body,
+            content=(
+                "Ask me a question about the data first (for example “top 10 customers "
+                "by revenue”), then ask for Python code and I'll give you code that "
+                "reproduces that answer."
+            ),
+            status_="answered", plan=None, payload=None, calls=[], user=user,
+        )  # fmt: skip
+    question, answer = last
+    explanation = (answer.answer or {}).get("explanation", {})
+    python = pandas_code(
+        answer.plan or {},
+        file_name=ds.original_filename,
+        file_format=ds.file_format,
+        date_range=explanation.get("date_range"),
+    )
+    blocks = [{"language": "python", "code": python}]
+    if explanation.get("sql", "").startswith("SELECT"):
+        params = ", ".join(repr(p) for p in explanation.get("params", []))
+        blocks.append(
+            {
+                "language": "sql",
+                "code": f"-- DuckDB; parameters in order: {params}\n"
+                + explanation["sql"].replace("read_parquet(?)", repr(ds.original_filename)),
+            }
+        )
+    return _save_turn(
+        db, conv, body,
+        content=(
+            f"Here's Python (pandas) code that reproduces “{question.content}”. "
+            f"Put {ds.original_filename} next to it, or change the file path."
+        ),
+        status_="answered", plan=None, payload={"type": "code", "blocks": blocks},
+        calls=[], user=user,
     )  # fmt: skip
 
 

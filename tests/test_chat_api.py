@@ -414,3 +414,50 @@ def test_stream_reports_errors_as_events(
     }
     other = stream_events(client, acct, question="x", dataset_id="nope")
     assert other[-1]["status"] == 404
+
+
+# --- "write python code" and "download" ----------------------------------------------
+
+
+def test_python_code_reproduces_the_last_answer(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    llm = use_llm(app, FakeLLM([REVENUE_BY_REGION], summary="Done."))
+    conv = ask(client, acct, "Revenue by region", dataset_id=dataset_id).json()["conversation_id"]
+    calls = len(llm.calls)
+    reply = ask(client, acct, "Can you write python code?", conversation_id=conv).json()["reply"]
+    assert len(llm.calls) == calls  # generated from the plan, no model call
+    assert reply["answer"]["type"] == "code"
+    python = reply["answer"]["blocks"][0]
+    assert python["language"] == "python"
+    assert reply["answer"]["blocks"][1]["language"] == "sql"
+
+    import os
+
+    namespace: dict[str, Any] = {}
+    cwd = os.getcwd()
+    os.chdir(SAMPLE)
+    try:
+        exec(python["code"].replace("sales_orders.csv", "sales_orders.csv"), namespace)  # noqa: S102
+    finally:
+        os.chdir(cwd)
+    expected = pd.read_csv(SAMPLE / "sales_orders.csv").groupby("region")["revenue"].sum()
+    got = namespace["result"].set_index("region")["sum_revenue"]
+    assert got.to_dict() == pytest.approx(expected.to_dict())
+
+
+def test_code_before_any_question_explains(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    use_llm(app, FakeLLM([]))
+    reply = ask(client, acct, "write python code", dataset_id=dataset_id).json()["reply"]
+    assert "Ask me a question about the data first" in reply["content"]
+
+
+def test_download_request_points_to_buttons(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    llm = use_llm(app, FakeLLM([]))
+    reply = ask(client, acct, "give me a download option", dataset_id=dataset_id).json()["reply"]
+    assert "CSV" in reply["content"]
+    assert llm.calls == []
