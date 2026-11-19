@@ -77,9 +77,21 @@ _STOPWORDS = frozenset(
 )
 
 
+_SUFFIXES = ("izations", "ization", "isations", "isation", "ations", "ation", "ings", "ing",
+             "ness", "ments", "ment", "ies", "ed", "es", "ly", "s")  # fmt: skip
+
+
+def stem(word: str) -> str:
+    """A light stemmer: "normalizations", "normalization", "normal" all become "normal"."""
+    for suffix in _SUFFIXES:
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            return word[: -len(suffix)]
+    return word
+
+
 def tokenize(text: str) -> list[str]:
     words = re.findall(r"[a-z0-9]+(?:[.,][0-9]+)*", text.lower())
-    return [w.rstrip("s") if len(w) > 4 else w for w in words if w not in _STOPWORDS]
+    return [stem(w) for w in words if w not in _STOPWORDS]
 
 
 def search(question: str, passages: list[Passage], k: int = 5) -> list[Passage]:

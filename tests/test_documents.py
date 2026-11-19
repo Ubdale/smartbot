@@ -215,12 +215,13 @@ def test_invented_number_is_withheld(
 
 
 def test_not_in_document(app: FastAPI, client: TestClient, acct: Account, doc_id: str) -> None:
-    llm = FakeLLM([])
-    app.dependency_overrides[get_llm] = lambda: llm
+    # No shared keywords: the model still reads the document, and says it isn't there.
+    app.dependency_overrides[get_llm] = lambda: reply_for(
+        {"found": False, "answer": "", "sources": []}
+    )
     reply = ask(client, acct, "quarterly bonus formula xyz", dataset_id=doc_id)["reply"]
     assert reply["status"] == "failed"
     assert reply["content"] == NOT_FOUND
-    assert llm.calls == []  # nothing matched, so no model call at all
 
     app.dependency_overrides[get_llm] = lambda: reply_for(
         {"found": False, "answer": "", "sources": []}
@@ -244,3 +245,20 @@ def test_follow_up_gets_previous_turn(
     follow_up = llm.plan_calls[1]
     assert any(m.content == "Question: How much annual leave?" for m in follow_up)
     assert any(m.role == "assistant" and m.content == "24 days [1]." for m in follow_up)
+
+
+def test_what_is_this_document_about_reads_the_whole_document(
+    app: FastAPI, client: TestClient, acct: Account, doc_id: str
+) -> None:
+    llm = reply_for({"found": True, "answer": "It is the company handbook [1].", "sources": [1]})
+    app.dependency_overrides[get_llm] = lambda: llm
+    reply = ask(client, acct, "What is this document about?", dataset_id=doc_id)["reply"]
+    assert reply["status"] == "answered"
+    assert reply["content"] == "It is the company handbook [1]."
+    assert len(llm.calls) == 1  # answered from passages across the document
+
+
+def test_search_matches_word_forms() -> None:
+    from app.documents.search import tokenize
+
+    assert set(tokenize("types of normalizations")) & set(tokenize("Normal forms: 1NF, 2NF"))
