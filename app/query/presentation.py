@@ -52,7 +52,11 @@ def fmt_value(value: Any) -> str:
 def describe_plan(vp: ValidatedPlan) -> str:
     """A plain-English sentence describing exactly what was computed."""
     p = vp.plan
-    if p.metric == "count":
+    if p.metric == "describe":
+        return "An overview of the dataset: its columns, their types and example values."
+    if p.metric == "rows":
+        what = "Rows" + (f" showing {', '.join(p.columns)}" if p.columns else "")
+    elif p.metric == "count":
         what = "Number of rows"
     elif p.metric == "count_distinct":
         what = f"Number of distinct {p.metric_column}"
@@ -79,6 +83,11 @@ def describe_plan(vp: ValidatedPlan) -> str:
     if conditions:
         parts.append("where " + " and ".join(conditions))
     sentence = ", ".join(parts)
+    if p.metric == "rows":
+        if p.sort and p.sort.by != "value":
+            order = "highest first" if p.sort.direction == "desc" else "lowest first"
+            sentence += f"; sorted by {p.sort.by}, {order}"
+        return sentence + f"; showing up to {p.limit} rows."
     if groups:
         if p.sort:
             key = "value" if p.sort.by == "value" else p.sort.by
@@ -174,6 +183,13 @@ def fallback_summary(vp: ValidatedPlan, result: QueryResult) -> str:
     """A deterministic summary built only from the computed rows."""
     if not result.rows:
         return "No rows matched this question. Try widening the time period or removing a filter."
+    if vp.plan.metric == "describe":
+        names = ", ".join(str(r[0]) for r in result.rows[:12])
+        more = " and more" if len(result.rows) > 12 else ""
+        return f"This dataset has {len(result.rows)} columns: {names}{more}."
+    if vp.plan.metric == "rows":
+        more = " (more exist; add a filter or ask for more)" if result.truncated else ""
+        return f"Here are the {len(result.rows)} matching rows{more}."
     what = metric_label(vp)
     if not result.dimensions:
         value = fmt_value(result.rows[0][-1])

@@ -54,12 +54,16 @@ class ValidatedPlan:
 
     @property
     def dimension_aliases(self) -> list[str]:
+        if self.plan.metric in ("rows", "describe"):
+            return []
         dims: list[str] = [self.plan.time_grain] if self.plan.time_grain else []
         return dims + list(self.plan.group_by)
 
     @property
     def metric_alias(self) -> str:
         p = self.plan
+        if p.metric in ("rows", "describe"):
+            return ""
         alias = "count" if p.metric == "count" else f"{p.metric}_{p.metric_column}"
         lowered = {d.lower() for d in self.dimension_aliases}
         while alias.lower() in lowered:  # e.g. grouping by a column literally named "count"
@@ -168,7 +172,14 @@ def validate_plan(plan: QueryPlan, columns: list[ColumnInfo], today: date) -> Va
         return c
 
     metric_column = None
-    if plan.metric == "count":
+    list_columns: list[str] = []
+    if plan.metric == "describe":
+        return ValidatedPlan(QueryPlan(metric="describe"), {}, None, [])
+    if plan.metric == "rows":
+        if plan.group_by or plan.time_grain:
+            raise PlanError("metric 'rows' lists rows: leave group_by and time_grain empty.")
+        list_columns = [col(c, "columns").name for c in plan.columns]
+    elif plan.metric == "count":
         pass  # count(*) ignores metric_column
     else:
         if not plan.metric_column:
@@ -225,6 +236,8 @@ def validate_plan(plan: QueryPlan, columns: list[ColumnInfo], today: date) -> Va
         filters.append(f.model_copy(update={"column": c.name}))
 
     dims = ([plan.time_grain] if plan.time_grain else []) + group_by
+    if plan.metric == "rows":
+        dims = [c.name for c in columns]  # any column can order a list of rows
     sort = plan.sort
     # Models often name the measured column ("revenue", "sum_revenue") meaning "the value".
     value_names = {"value", plan.metric, f"{plan.metric}_{metric_column}", metric_column or ""}
@@ -241,6 +254,7 @@ def validate_plan(plan: QueryPlan, columns: list[ColumnInfo], today: date) -> Va
     canonical = plan.model_copy(
         update={
             "metric_column": metric_column,
+            "columns": list_columns,
             "group_by": group_by,
             "date_column": date_column,
             "filters": filters,
@@ -283,8 +297,39 @@ def _filter_sql(f: Filter, kind: str, value: Any, params: list[Any]) -> str:
     return f"{q} {op} ?"
 
 
+def _where(vp: ValidatedPlan, params: list[Any]) -> list[str]:
+    p = vp.plan
+    where: list[str] = []
+    if vp.date_range and p.date_column:
+        dq = quote_ident(p.date_column)
+        where.append(f"{dq} >= ? AND {dq} < ?")
+        params += [vp.date_range.start, vp.date_range.end]
+    for f, value in zip(p.filters, vp.filter_values, strict=True):
+        where.append(_filter_sql(f, vp.kinds[f.column], value, params))
+    return where
+
+
+def _rows_sql(vp: ValidatedPlan, parquet: Path) -> tuple[str, list[Any]]:
+    """metric "rows": the matching rows themselves (selected columns, filtered, capped)."""
+    p = vp.plan
+    params: list[Any] = [str(parquet)]
+    select = ", ".join(quote_ident(c) for c in p.columns) if p.columns else "*"
+    sql = f"SELECT {select}\nFROM read_parquet(?)"
+    where = _where(vp, params)
+    if where:
+        sql += "\nWHERE " + "\n  AND ".join(where)
+    if p.sort and p.sort.by != "value":
+        direction = "ASC" if p.sort.direction == "asc" else "DESC"
+        sql += f"\nORDER BY {quote_ident(p.sort.by)} {direction} NULLS LAST"
+    sql += "\nLIMIT ?"
+    params.append(p.limit + 1)
+    return sql, params
+
+
 def build_sql(vp: ValidatedPlan, parquet: Path) -> tuple[str, list[Any]]:
     p = vp.plan
+    if p.metric == "rows":
+        return _rows_sql(vp, parquet)
     params: list[Any] = [str(parquet)]
 
     select: list[str] = []
@@ -303,13 +348,7 @@ def build_sql(vp: ValidatedPlan, parquet: Path) -> tuple[str, list[Any]]:
         metric = f"{_METRIC_SQL[p.metric]}({quote_ident(p.metric_column or '')})"
     select.append(f"{metric} AS {quote_ident(vp.metric_alias)}")
 
-    where: list[str] = []
-    if vp.date_range and p.date_column:
-        dq = quote_ident(p.date_column)
-        where.append(f"{dq} >= ? AND {dq} < ?")
-        params += [vp.date_range.start, vp.date_range.end]
-    for f, value in zip(p.filters, vp.filter_values, strict=True):
-        where.append(_filter_sql(f, vp.kinds[f.column], value, params))
+    where = _where(vp, params)
 
     sql = f"SELECT {', '.join(select)}\nFROM read_parquet(?)"
     if where:

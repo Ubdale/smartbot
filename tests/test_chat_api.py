@@ -320,3 +320,53 @@ def test_sql_shown_to_user_has_placeholders_only(
     assert "Apex Labs" not in exp["sql"]
     assert exp["params"] == ["Apex Labs"]
     assert not re.search(r"[A-Za-z]:[\\/]|/tmp/|data/workspaces", exp["sql"] + str(exp["params"]))
+
+
+# --- listing rows and describing the dataset ----------------------------------------
+
+
+def test_list_rows_shows_the_actual_rows(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    plan = {
+        "metric": "rows",
+        "columns": ["order_id", "customer", "revenue"],
+        "filters": [{"column": "product", "op": "=", "value": "Training Day"},
+                    {"column": "quantity", "op": "=", "value": 3}],
+        "sort": {"by": "revenue", "direction": "desc"},
+        "limit": 5,
+    }  # fmt: skip
+    use_llm(app, FakeLLM([plan], summary="Here they are."))
+    reply = ask(client, acct, "show the biggest 3-day training orders", dataset_id=dataset_id)
+    answer = reply.json()["reply"]["answer"]
+    df = pd.read_csv(SAMPLE / "sales_orders.csv")
+    expected = df[(df["product"] == "Training Day") & (df.quantity == 3)].sort_values(
+        "revenue", ascending=False
+    )
+    assert answer["table"]["columns"] == ["order_id", "customer", "revenue"]
+    assert [r[2] for r in answer["table"]["rows"]] == pytest.approx(list(expected.revenue[:5]))
+    assert {r[0] for r in answer["table"]["rows"]} <= set(expected.order_id)
+    assert answer["table"]["truncated"] == (len(expected) > 5)
+    assert answer["chart"] is None
+    assert "Rows showing order_id, customer, revenue" in answer["explanation"]["description"]
+
+
+def test_what_is_this_file_about_is_answered_from_the_profile(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    use_llm(app, FakeLLM([{"metric": "describe"}], summary="Sales orders by customer."))
+    reply = ask(client, acct, "what is this file about?", dataset_id=dataset_id).json()["reply"]
+    table = reply["answer"]["table"]
+    assert reply["status"] == "answered"
+    assert table["columns"] == ["column", "type", "examples or range"]
+    assert ["revenue", "number", "16.15 to 12,475"] in table["rows"]
+    assert reply["answer"]["explanation"]["sql"].startswith("-- no query")
+
+
+def test_rows_cannot_be_grouped(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    bad = {"metric": "rows", "group_by": ["region"]}
+    use_llm(app, FakeLLM([bad, bad]))
+    reply = ask(client, acct, "list by region", dataset_id=dataset_id).json()["reply"]
+    assert reply["status"] == "failed"

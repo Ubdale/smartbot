@@ -19,6 +19,9 @@ You never write SQL and never compute numbers; the backend does that.
 Rules:
 - Use only column names from the table description, spelled exactly.
 - metric: count (rows), count_distinct, sum, avg, min, max. sum/avg need a number column.
+  Use "rows" to list the matching rows themselves ("show/list ...", "which ... are",
+  "all the formulas"), with columns = the columns worth showing (empty = all).
+  Use "describe" for "what is this file/data about?" or "what columns are there?".
 - group_by: at most 2 columns. Use time_grain (day/week/month/quarter/year) with
   date_column for trends over time ("by month", "monthly", "over time").
 - date_phrase: copy the time period from the question word for word ("last quarter",
@@ -69,6 +72,12 @@ EXAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("Which orders are over 300?",
      {"metric": "count", "group_by": ["store"],
       "filters": [{"column": "amount", "op": ">", "value": 300}], "chart": "bar"}),
+    ("List the online orders over 300 with their store",
+     {"metric": "rows", "columns": ["order_day", "store", "amount"],
+      "filters": [{"column": "is_online", "op": "=", "value": True},
+                  {"column": "amount", "op": ">", "value": 300}],
+      "sort": {"by": "amount", "direction": "desc"}, "limit": 50}),
+    ("What is this data about?", {"metric": "describe"}),
     ("How is our employee morale?",
      {"clarification_needed": "This table has orders, not employee data. Do you want "
       "to ask about orders, stores or customers instead?"}),

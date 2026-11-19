@@ -115,7 +115,7 @@ class LLMProvider(ABC):
     def summarize(self, question: str, description: str, table_text: str) -> tuple[str, LLMCall]:
         messages = prompts.summary_messages(question, description, table_text)
         started = time.perf_counter()
-        out = self.complete(messages, max_tokens=220)
+        out = self.complete(messages, max_tokens=400)
         return out.text.strip(), self._call("summary", out, started, success=True)
 
     def complete_with_image(

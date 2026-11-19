@@ -8,7 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-Metric = Literal["count", "count_distinct", "sum", "avg", "min", "max"]
+# "rows" lists matching rows themselves; "describe" answers "what is this data about?".
+Metric = Literal["count", "count_distinct", "sum", "avg", "min", "max", "rows", "describe"]
 FilterOp = Literal["=", "!=", ">", ">=", "<", "<=", "in", "contains", "between"]
 TimeGrain = Literal["day", "week", "month", "quarter", "year"]
 ChartType = Literal["none", "bar", "line", "pie"]
@@ -17,6 +18,7 @@ Scalar = str | int | float | bool
 MAX_GROUP_BY = 2
 MAX_FILTERS = 10
 MAX_LIMIT = 100
+MAX_LIST_COLUMNS = 20
 
 
 class Filter(BaseModel):
@@ -43,6 +45,8 @@ class QueryPlan(BaseModel):
     clarification_needed: str | None = None
     metric: Metric = "count"
     metric_column: str | None = None
+    # For metric "rows": the columns to show (empty = all).
+    columns: list[str] = Field(default_factory=list, max_length=MAX_LIST_COLUMNS)
     group_by: list[str] = Field(default_factory=list, max_length=MAX_GROUP_BY)
     # Group the date_column into periods, e.g. "revenue by month".
     time_grain: TimeGrain | None = None

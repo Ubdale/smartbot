@@ -34,6 +34,26 @@ class Answer:
     calls: list[LLMCall] = field(default_factory=list)
 
 
+def describe_profile(profile: list[dict[str, Any]], row_count: int) -> QueryResult:
+    """'What is this data about?' answered from the stored column summary (no SQL)."""
+    rows: list[list[Any]] = []
+    for c in profile:
+        if c["kind"] in ("number", "date", "datetime") and c.get("min") is not None:
+            detail = f"{fmt_value(c['min'])} to {fmt_value(c['max'])}"
+        else:
+            detail = ", ".join(fmt_value(v) for v in c.get("samples", []))
+        rows.append([c["name"], c["kind"], detail])
+    return QueryResult(
+        columns=["column", "type", "examples or range"],
+        rows=rows,
+        truncated=False,
+        sql=f"-- no query: described from the column summary ({row_count:,} rows)",
+        params=[],
+        dimensions=[],
+        value_column="",
+    )
+
+
 def table_text(result: QueryResult, limit: int = SUMMARY_ROWS) -> str:
     lines = [" | ".join(result.columns)]
     for row in result.rows[:limit]:
@@ -117,7 +137,10 @@ def answer_question(
 
     vp = outcome.validated
     try:
-        result = execute_plan(vp, parquet, dataset_id=dataset_id, version=dataset_version)
+        if vp.plan.metric == "describe":
+            result = describe_profile(profile, row_count)
+        else:
+            result = execute_plan(vp, parquet, dataset_id=dataset_id, version=dataset_version)
     except QueryTimeoutError as exc:
         return Answer("failed", f"{exc} Try a narrower question.", vp, calls=outcome.calls)
 

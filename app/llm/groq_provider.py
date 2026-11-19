@@ -44,6 +44,10 @@ class GroqProvider(LLMProvider):
             "temperature": 0,
             "max_tokens": max_tokens,
         }
+        if self.model.startswith("openai/gpt-oss"):
+            # Reasoning models spend output tokens on hidden reasoning first; our tasks are
+            # small and fully specified, and without this, answers get cut off mid-sentence.
+            body["reasoning_effort"] = "low"
         if json_schema is not None:
             body["response_format"] = {"type": "json_object"}
             hint = "Reply with one JSON object matching this JSON schema:\n" + json.dumps(
