@@ -7,7 +7,7 @@ request whenever the main one is unavailable or out of free-tier quota.
 from collections.abc import Callable
 from typing import Annotated, Any
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
 
 from app.core.config import DEFAULT_MODELS, DEFAULT_SUMMARY_MODELS, Settings, get_settings
 from app.llm.base import (
@@ -152,11 +152,18 @@ def _cache_key(settings: Settings, summary: bool) -> tuple[str, ...]:
     )
 
 
-def get_llm(settings: Annotated[Settings, Depends(get_settings)]) -> LLMProvider:
-    key = _cache_key(settings, False)
+def _build(settings: Settings, summary: bool) -> LLMProvider:
+    key = _cache_key(settings, summary)
     if key not in _cached:
-        _cached[key] = make_provider(settings)
+        try:
+            _cached[key] = make_provider(settings, summary=summary)
+        except LLMUnavailableError as exc:  # misconfiguration: say what's wrong, not "500"
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     return _cached[key]
+
+
+def get_llm(settings: Annotated[Settings, Depends(get_settings)]) -> LLMProvider:
+    return _build(settings, summary=False)
 
 
 def get_summary_llm(
@@ -166,7 +173,4 @@ def get_summary_llm(
     """The model that writes summaries; the planning model unless a separate one is set."""
     if settings.summary_model_name == settings.model_name and not settings.llm_fallback_provider:
         return planner
-    key = _cache_key(settings, True)
-    if key not in _cached:
-        _cached[key] = make_provider(settings, summary=True)
-    return _cached[key]
+    return _build(settings, summary=True)

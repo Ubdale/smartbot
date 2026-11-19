@@ -340,3 +340,28 @@ def test_own_model_gives_up_early_when_groq_is_the_backup() -> None:
     alone = make_provider(Settings(_env_file=None))
     assert isinstance(alone, OllamaProvider)
     assert alone.timeout_seconds == 300  # nothing to fall back to: be patient
+
+
+def test_pasted_values_are_trimmed() -> None:
+    s = Settings(_env_file=None, llm_provider="ollama", llm_model="qwen2.5:7b-instruct\n")
+    assert s.model_name == "qwen2.5:7b-instruct"
+
+
+def test_llm_misconfiguration_is_a_clear_503(client: Any, app: Any, settings: Settings) -> None:
+    from app.core.config import get_settings
+    from tests.conftest import signup
+
+    acct = signup(client, "cfg@acme.com")
+    bad = settings.model_copy(
+        update={
+            "llm_provider": "gemini",
+            "gemini_api_key": SecretStr("k"),
+            "llm_model": "qwen2.5:7b-instruct",
+        }
+    )
+    app.dependency_overrides[get_settings] = lambda: bad
+    resp = client.post(
+        "/chat/ask", headers=acct.headers, json={"question": "hi", "dataset_id": "x"}
+    )
+    assert resp.status_code == 503
+    assert "doesn't look like a gemini model" in resp.json()["detail"]

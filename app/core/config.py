@@ -26,7 +26,13 @@ DEFAULT_SECRET = "change-me-in-production"  # noqa: S105 - placeholder, rejected
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        # Values pasted into hosting dashboards often carry a stray space or newline.
+        str_strip_whitespace=True,
+    )
 
     app_name: str = "AskData"
     app_env: Literal["dev", "test", "prod"] = "dev"
