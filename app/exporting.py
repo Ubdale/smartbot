@@ -22,11 +22,6 @@ _ISO_DATETIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")
 _FORMULA = re.compile(r"^[=+\-@]")
 # Identifiers are numbers you never add up: no thousands separators for them.
 _ID_LIKE = re.compile(r"(^|[\s_\-])(id|key|code|no|number|num|zip|phone|year|ref)($|[\s_\-])", re.I)
-_TITLE_NOISE = re.compile(
-    r"^(if i (tell|ask) you to|can you|could you|would you|please|pls|i want( you)? to|"
-    r"give me|show me|make( me)?|create)\b",
-    re.I,
-)
 
 
 def _cell_value(v: Any) -> Any:
@@ -70,13 +65,45 @@ def _number_format(values: list[Any], column: str = "") -> str | None:
     return "#,##0.00"
 
 
-def answer_title(question: str, description: str) -> str:
-    """A clean title: the question when it reads like one, else what was computed."""
+_LEAD_NOISE = re.compile(
+    r"^(if\s+i\s+(tell|ask)\s+you\s+to|can\s+you|could\s+you|would\s+you|will\s+you|please|pls|"
+    r"kindly|i\s+want(\s+you)?\s+to|i\s+need|give\s+me|show\s+me|get\s+me|make(\s+me)?|"
+    r"create|build|prepare|generate|export|download|list|an?|the|"
+    r"(sheet|spreadsheet|excel|file|table|report|list|workbook)(\s+(which|that)(\s+will)?"
+    r"\s+(have|has|show|shows|contain|contains|include|includes)|\s+(with|of|for))?)\s+",
+    re.I,
+)
+_TAIL_NOISE = re.compile(
+    r"\s+((would|will|can|could)\s+you(\s+(do|make|give)(\s+(it|that|this|me))?)?|please|pls"
+    r"|thanks?(\s+you)?|for\s+me|in\s+(an?\s+)?(excel|sheet|pdf|file))$",
+    re.I,
+)
+
+
+def _clean_question(question: str) -> str:
+    """“if i tell you to make a sheet which will have task of Sara would you do it?”
+    becomes “Task of Sara”: the request wording goes, the subject stays."""
     q = question.strip().rstrip("?.! ")
-    if len(q) <= 70 and not _TITLE_NOISE.search(q) and " would you " not in f" {q.lower()} ":
-        return q[:1].upper() + q[1:]
+    for _ in range(8):
+        shorter = _TAIL_NOISE.sub("", _LEAD_NOISE.sub("", q)).strip(" ,.?!")
+        if shorter == q:
+            break
+        q = shorter
+    return q[:1].upper() + q[1:]
+
+
+def answer_title(question: str, description: str) -> str:
+    """A clean title for exports: never the raw prompt. The question with the request
+    wording removed when that reads well, else what was computed."""
+    cleaned = _clean_question(question)
+    if 3 <= len(cleaned) <= 80:
+        return cleaned
     d = re.sub(r";\s*(showing up to|sorted by).*$", "", description).rstrip(". ")
-    return (d or q)[:120]
+    if d:
+        return d[:120]
+    if len(cleaned) >= 3:
+        return cleaned[:77].rsplit(" ", 1)[0] + "…"
+    return "AskData answer"
 
 
 def _sheet_name(text: str) -> str:

@@ -547,7 +547,16 @@ def test_excel_titles_ids_totals_and_about_sheet() -> None:
             "if i tell you to make a sheet which will have task of Sara would you do it?",
             "Rows showing Summary, where Assignee is one of Sara; showing up to 50 rows.",
         )
-        == "Rows showing Summary, where Assignee is one of Sara"
+        == "Task of Sara"
+    )
+    assert answer_title("give me formatted excel", "Revenue by region.") == "Formatted excel"
+    assert (
+        answer_title(
+            "if i tell you to make a sheet which will have task of Muhammad Ubdale and "
+            "Areesha and Zarmeen would you do it?",
+            "",
+        )
+        == "Task of Muhammad Ubdale and Areesha and Zarmeen"
     )
 
     data = build_answer_workbook(

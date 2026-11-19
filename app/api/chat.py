@@ -708,7 +708,11 @@ def _download(content: bytes, media_type: str, question: str, ext: str) -> Respo
     return Response(
         content,
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{name}.{ext}"'},
+        # no-store: always a fresh file, never an old copy from the browser cache.
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}.{ext}"',
+            "Cache-Control": "no-store",
+        },
     )
 
 
