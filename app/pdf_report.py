@@ -1,4 +1,4 @@
-"""A one-page-or-more PDF report of an answer: title, summary, bar chart, table."""
+"""A PDF of an answer's table: a title, the chart and the table (no response text)."""
 
 import io
 from datetime import date, datetime
@@ -98,19 +98,6 @@ def build_answer_pdf(
     pdf.set_font("Helvetica", "B", 16)
     pdf.set_text_color(*INK)
     pdf.multi_cell(width, 8, _t(title))
-    pdf.set_font("Helvetica", size=10)
-    pdf.set_text_color(63, 63, 70)
-    pdf.ln(1)
-    pdf.multi_cell(width, 5, _t(summary))
-    pdf.set_font("Helvetica", "I", 8)
-    pdf.set_text_color(*MUTED)
-    pdf.ln(1)
-    dr = explanation.get("date_range")
-    period = f" | {dr['label']}: {dr['start']} to {dr['end']}" if dr else ""
-    pdf.multi_cell(width, 4, _t(f'From "{dataset_name}"{period} | {created_at:%d %b %Y %H:%M} UTC'))
-    if explanation.get("data_note"):
-        pdf.set_text_color(180, 83, 9)
-        pdf.multi_cell(width, 4, _t(explanation["data_note"]))
     pdf.ln(4)
 
     # The chart (bar, line or pie), drawn by code from the original answer.

@@ -108,6 +108,7 @@ def test_word_report_has_chart_and_formatted_table() -> None:
     )
     doc = Document(io.BytesIO(build_answer_docx(**COMMON, style=style)))
     assert doc.paragraphs[0].text == "Revenue by region"
+    assert all("North leads" not in p.text for p in doc.paragraphs)  # no response text
     assert len(doc.inline_shapes) == 1  # the chart picture
     table = doc.tables[0]
     assert [c.text for c in table.rows[0].cells] == ["region", "Total revenue"]
@@ -124,7 +125,7 @@ def test_powerpoint_has_a_native_chart_and_data_slides() -> None:
         style=ExportStyle(summary_rows=["average"]),
     )))  # fmt: skip
     slides = list(deck.slides)
-    assert len(slides) == 1 + 3  # the answer, then 30 rows over 3 slides of 12
+    assert len(slides) == 1 + 3  # the chart, then 30 rows over 3 slides of 12
     charts = [s for s in slides[0].shapes if s.has_chart]
     assert len(charts) == 1  # editable in PowerPoint, not a picture
     assert list(charts[0].chart.plots[0].categories)[:2] == ["Region 0", "Region 1"]

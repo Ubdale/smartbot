@@ -102,19 +102,17 @@ def test_styled_workbook() -> None:
         sort=SortSpec(column="Due date"),
     )
     wb = _workbook(style)
-    ws = wb["Answer"]  # type: ignore[index]
-    assert ws["A1"].value == "Overdue check"
-    assert ws["A5"].fill.fgColor.rgb.endswith("16A34A")  # green header
+    ws = wb.active  # type: ignore[attr-defined]
+    assert ws.title == "Overdue check"
+    assert ws["A1"].fill.fgColor.rgb.endswith("16A34A")  # green header
     # Sorted by due date, blanks last: 101 (overdue), 104 (overdue), 102, 103.
-    assert [ws.cell(row=r, column=1).value for r in range(6, 10)] == [101, 104, 102, 103]
-    assert ws["B6"].fill.fgColor.rgb.endswith("FEE2E2")  # overdue rows in red
-    assert ws["B7"].fill.fgColor.rgb.endswith("FEE2E2")
-    assert not ws["B8"].fill.fgColor.rgb.endswith("FEE2E2")
-    assert ws["E10"].value == "=SUM(E6:E9)"  # live formulas, not typed-in numbers
-    assert ws["E11"].value == "=AVERAGE(E6:E9)"
-    assert ws["A10"].value == "Total" and ws["A11"].value == "Average"  # IDs never totalled
-    about = wb["How this was made"]  # type: ignore[index]
-    assert any("green header" in str(c.value) for c in about["B"])
+    assert [ws.cell(row=r, column=1).value for r in range(2, 6)] == [101, 104, 102, 103]
+    assert ws["B2"].fill.fgColor.rgb.endswith("FEE2E2")  # overdue rows in red
+    assert ws["B3"].fill.fgColor.rgb.endswith("FEE2E2")
+    assert not ws["B4"].fill.fgColor.rgb.endswith("FEE2E2")
+    assert ws["E6"].value == "=SUM(E2:E5)"  # live formulas, not typed-in numbers
+    assert ws["E7"].value == "=AVERAGE(E2:E5)"
+    assert ws["A6"].value == "Total" and ws["A7"].value == "Average"  # IDs never totalled
 
 
 def test_styled_pdf() -> None:
@@ -185,13 +183,14 @@ def test_style_by_asking_builds_up_and_exports(app: FastAPI, client: TestClient)
 
     resp = client.get(f"/chat/messages/{reply['id']}/export.xlsx", headers=acct.headers)
     assert resp.status_code == 200
-    ws = load_workbook(io.BytesIO(resp.content))["Answer"]
-    assert ws["A5"].fill.fgColor.rgb.endswith("16A34A")
-    regions = [str(ws.cell(row=r, column=1).value) for r in range(6, 10)]
+    ws = load_workbook(io.BytesIO(resp.content)).active
+    assert ws is not None
+    assert ws["A1"].fill.fgColor.rgb.endswith("16A34A")
+    regions = [str(ws.cell(row=r, column=1).value) for r in range(2, 6)]
     assert regions == sorted(regions)
-    north = 6 + regions.index("North")
+    north = 2 + regions.index("North")
     assert ws.cell(row=north, column=1).fill.fgColor.rgb.endswith("FEF9C3")
-    assert ws["B10"].value == "=AVERAGE(B6:B9)" and ws["A10"].value == "Average"
+    assert ws["B6"].value == "=AVERAGE(B2:B5)" and ws["A6"].value == "Average"
 
     pdf = client.get(f"/chat/messages/{reply['id']}/export.pdf", headers=acct.headers)
     assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF")

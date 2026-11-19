@@ -12,7 +12,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
-from app.styling import ExportStyle, apply_style, color, describe_style
+from app.styling import ExportStyle, apply_style, color
 
 BRAND = "4F46E5"  # indigo, as in the app
 BAND = "EEF2FF"
@@ -138,23 +138,13 @@ def build_answer_workbook(
 
     wb = Workbook()
     ws: Worksheet = wb.active  # type: ignore[assignment]
-    ws.title = _sheet_name("Answer")
+    ws.title = _sheet_name(title)
     ws.sheet_view.showGridLines = False
 
-    # Title block
-    ws["A1"] = title
-    ws["A1"].font = Font(size=16, bold=True, color="18181B")
-    ws["A2"] = summary
-    ws["A2"].font = Font(size=11, color="3F3F46")
-    ws["A2"].alignment = Alignment(wrap_text=True, vertical="top")
-    ws["A3"] = f"From “{dataset_name}” · {created_at:%d %b %Y %H:%M} UTC · computed by AskData"
-    ws["A3"].font = Font(size=9, italic=True, color="71717A")
     last_col = get_column_letter(max(len(columns), 1))
-    ws.merge_cells(f"A2:{last_col}2")
-    ws.row_dimensions[2].height = 15 * max(1, min(6, len(summary) // 90 + 1))
 
-    # Table
-    header_row = 5
+    # Just the table: headers in row 1, data from row 2.
+    header_row = 1
     for j, name in enumerate(columns, start=1):
         cell = ws.cell(row=header_row, column=j, value=_pretty(name))
         cell.font = Font(bold=True, color=header_text)
@@ -196,24 +186,6 @@ def build_answer_workbook(
     value_col = len(columns)
     if style.summary_rows is not None:
         _summary_rows(ws, style, columns, summable, formats, header_row, last_row)
-    elif (
-        rows
-        and metric in ("sum", "count", "count_distinct")
-        and len(columns) > 1
-        and (formats[-1] not in (None, "0"))
-    ):
-        letter = get_column_letter(value_col)
-        rng = f"{letter}{header_row + 1}:{letter}{last_row}"
-        if metric == "sum" or (metric == "count" and not plan.get("time_grain")):
-            total_row = last_row + 1
-            ws.cell(row=total_row, column=1, value="Total").font = Font(bold=True)
-            total = ws.cell(row=total_row, column=value_col, value=f"=SUM({rng})")
-            total.font = Font(bold=True)
-            total.number_format = formats[-1] or "#,##0"
-            for j in range(1, value_col + 1):
-                ws.cell(row=total_row, column=j).border = Border(
-                    top=Side(style="medium", color=BRAND)
-                )
     if (
         rows
         and metric in ("sum", "count", "count_distinct")
@@ -259,46 +231,9 @@ def build_answer_workbook(
     ws.page_setup.orientation = "landscape" if len(columns) > 4 else "portrait"
     ws.page_setup.fitToWidth = 1
 
-    _about_sheet(wb, question, title, explanation, dataset_name, created_at, len(rows),
-                 describe_style(style) if style != ExportStyle() else None)  # fmt: skip
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
-
-
-def _about_sheet(
-    wb: Workbook,
-    question: str,
-    title: str,
-    explanation: dict[str, Any],
-    dataset_name: str,
-    created_at: datetime,
-    row_count: int,
-    formatting: str | None = None,
-) -> None:
-    """How the numbers were made, for anyone the file is forwarded to."""
-    ws = wb.create_sheet("How this was made")
-    ws.sheet_view.showGridLines = False
-    dr = explanation.get("date_range")
-    lines: list[tuple[str, Any]] = [
-        ("Title", title),
-        ("Question asked", question),
-        ("What was computed", explanation.get("description", "")),
-        ("Time period", f"{dr['label']}: {dr['start']} to {dr['end']}" if dr else "All dates"),
-        ("Source file", dataset_name),
-        ("Rows in this answer", row_count),
-        ("Created", f"{created_at:%d %b %Y %H:%M} UTC"),
-        *([("Formatting", formatting)] if formatting else []),
-        ("Note", explanation.get("data_note") or
-         "Every number was computed from your data by AskData's database engine, not "
-         "written by AI."),
-    ]  # fmt: skip
-    ws.column_dimensions["A"].width = 22
-    ws.column_dimensions["B"].width = 90
-    for i, (label, value) in enumerate(lines, start=1):
-        ws.cell(row=i, column=1, value=label).font = Font(bold=True, color=BRAND)
-        cell = ws.cell(row=i, column=2, value=_cell_value(value))
-        cell.alignment = Alignment(wrap_text=True, vertical="top")
 
 
 _SUMMARY_FORMULA = {"total": "SUM", "average": "AVERAGE", "min": "MIN", "max": "MAX",

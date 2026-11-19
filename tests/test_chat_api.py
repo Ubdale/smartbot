@@ -489,15 +489,17 @@ def test_excel_request_gives_a_styled_workbook(
 
     ws = load_workbook(io.BytesIO(resp.content)).active
     assert ws is not None
-    assert ws["A1"].value == "Revenue by region"
-    assert ws["A2"].value == "North leads."
-    assert [c.value for c in ws[5]][:2] == ["region", "Total revenue"]
-    assert ws["A5"].font.bold
-    assert ws["A5"].fill.fgColor.rgb.endswith("4F46E5")
-    assert ws["B6"].number_format == "#,##0.00"
-    assert isinstance(ws["B6"].value, float)
-    assert ws.auto_filter.ref == "A5:B9"
-    assert ws.freeze_panes == "A6"
+    # Just the table: no title, summary or other text from the response.
+    assert ws.title == "Revenue by region"
+    assert [c.value for c in ws[1]][:2] == ["region", "Total revenue"]
+    assert ws["A1"].font.bold
+    assert ws["A1"].fill.fgColor.rgb.endswith("4F46E5")
+    assert ws["B2"].number_format == "#,##0.00"
+    assert isinstance(ws["B2"].value, float)
+    assert ws.auto_filter.ref == "A1:B5"
+    assert ws.freeze_panes == "A2"
+    assert ws.max_row == 5  # header + 4 regions, nothing else
+    assert all("North leads" not in str(c.value) for row in ws.iter_rows() for c in row)
     assert len(ws._charts) == 1  # type: ignore[attr-defined]  # native Excel chart
 
     other = signup(client, "spy@other.com", workspace="Other")
@@ -521,8 +523,8 @@ def test_excel_cells_never_become_formulas() -> None:
     )  # fmt: skip
     ws = load_workbook(io.BytesIO(data)).active
     assert ws is not None
-    assert ws["A6"].value == '\'=HYPERLINK("evil")'
-    assert ws["B6"].number_format == "yyyy-mm-dd"
+    assert ws["A2"].value == '\'=HYPERLINK("evil")'
+    assert ws["B2"].number_format == "yyyy-mm-dd"
 
 
 def test_excel_before_any_answer_explains(
@@ -568,19 +570,19 @@ def test_excel_titles_ids_totals_and_about_sheet() -> None:
                      "date_range": {"label": "2025", "start": "2025-01-01", "end": "2025-12-31"}},
     )  # fmt: skip
     wb = load_workbook(io.BytesIO(data))
-    ws = wb["Answer"]
-    assert ws["A8"].value == "Total"
-    assert ws["B8"].value == "=SUM(B6:B7)"  # a live Excel formula
+    assert wb.sheetnames == ["Revenue by region"]  # one sheet: the table
+    ws = wb.active
+    assert ws is not None
+    assert ws.max_row == 3  # no automatic total row unless asked for
     assert ws.conditional_formatting  # data bars on the values
-    about = wb["How this was made"]
-    assert about["B4"].value == "2025: 2025-01-01 to 2025-12-31"
 
     ids = build_answer_workbook(
         question="q", summary="s", chart=None, dataset_name="d", created_at=datetime.now(UTC),
         table={"columns": ["Issue id", "Story points"], "rows": [[40145, 3], [40146, 5]]},
     )  # fmt: skip
-    ws = load_workbook(io.BytesIO(ids))["Answer"]
-    assert ws["A6"].number_format == "0"  # no "40,145" for identifiers
+    ws = load_workbook(io.BytesIO(ids)).active
+    assert ws is not None
+    assert ws["A2"].number_format == "0"  # no "40,145" for identifiers
 
 
 def test_pdf_report(app: FastAPI, client: TestClient, acct: Account, dataset_id: str) -> None:

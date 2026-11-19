@@ -91,12 +91,6 @@ def _numeric(styled: StyledTable) -> list[bool]:
     ]
 
 
-def _meta(dataset_name: str, created_at: datetime, explanation: dict[str, Any]) -> str:
-    dr = explanation.get("date_range")
-    period = f" · {dr['label']}: {dr['start']} to {dr['end']}" if dr else ""
-    return f"From “{dataset_name}”{period} · {created_at:%d %b %Y %H:%M} UTC · AskData"
-
-
 # --- CSV ------------------------------------------------------------------------------
 
 
@@ -185,7 +179,7 @@ def build_answer_docx(
     style: ExportStyle | None = None,
     today: date | None = None,
 ) -> bytes:
-    """A Word report: title, summary, chart picture and a formatted table."""
+    """A Word file of the table: a title, the chart picture and the formatted table."""
     explanation = explanation or {}
     styled, style, decimals = _prepare(table, style, today)
     title = style.title or answer_title(question, explanation.get("description", ""))
@@ -205,15 +199,6 @@ def build_answer_docx(
     heading = doc.add_heading(title, level=1)
     for run in heading.runs:
         run.font.color.rgb = RGBColor.from_string("18181B")
-    doc.add_paragraph(summary)
-    meta = doc.add_paragraph().add_run(_meta(dataset_name, created_at, explanation))
-    meta.italic, meta.font.size = True, Pt(8)
-    meta.font.color.rgb = RGBColor.from_string("71717A")
-    if explanation.get("data_note"):
-        note = doc.add_paragraph().add_run(explanation["data_note"])
-        note.font.size = Pt(9)
-        note.font.color.rgb = RGBColor.from_string("B45309")
-
     png = render_chart_png(chart, table.get("columns", []), table.get("rows", []),
                            y_label=_pretty(chart["y"]) if chart else "")  # fmt: skip
     if png:
@@ -277,7 +262,7 @@ def build_answer_pptx(
     style: ExportStyle | None = None,
     today: date | None = None,
 ) -> bytes:
-    """Slides: the answer with a native (editable) chart, then the table over a few slides."""
+    """Slides: the chart (native, editable) if there is one, then the table."""
     explanation = explanation or {}
     styled, style, decimals = _prepare(table, style, today)
     title = style.title or answer_title(question, explanation.get("description", ""))
@@ -294,13 +279,9 @@ def build_answer_pptx(
         _textbox(slide, heading, 0.6, 0.35, 12.1, 0.8, size=26, bold=True)
         return slide
 
-    slide = new_slide(title)
     data = chart_series(chart, table.get("columns", []), table.get("rows", []))
-    text_w = 4.6 if data else 12.1
-    _textbox(slide, summary, 0.6, 1.3, text_w, 4.5, size=16, hex_="3F3F46")
-    _textbox(slide, _meta(dataset_name, created_at, explanation), 0.6, 6.7, 12.1, 0.4,
-             size=10, hex_="71717A")  # fmt: skip
     if data and chart:
+        slide = new_slide(title)
         cats, series = data
         chart_data = CategoryChartData()
         chart_data.categories = cats
@@ -309,7 +290,7 @@ def build_answer_pptx(
         ):
             chart_data.add_series(_pretty(name), values)
         kind = _PPT_CHART.get(chart.get("type", "bar"), XL_CHART_TYPE.COLUMN_CLUSTERED)
-        frame = slide.shapes.add_chart(kind, PptInches(5.5), PptInches(1.3), PptInches(7.3),
+        frame = slide.shapes.add_chart(kind, PptInches(0.6), PptInches(1.3), PptInches(12.1),
                                        PptInches(5.2), chart_data)  # fmt: skip
         native = frame.chart
         native.has_legend = len(series) > 1 or chart.get("type") == "pie"
@@ -334,7 +315,7 @@ def build_answer_pptx(
         for n, chunk in enumerate(chunks):
             last = n == len(chunks) - 1
             extra = len(styled.summary) if last else 0
-            s = new_slide(f"{title} (data{f', {n + 1}/{len(chunks)}' if len(chunks) > 1 else ''})")
+            s = new_slide(f"{title} ({n + 1}/{len(chunks)})" if len(chunks) > 1 else title)
             shape = s.shapes.add_table(1 + len(chunk) + extra, len(styled.columns),
                                        PptInches(0.6), PptInches(1.3), PptInches(12.1),
                                        PptInches(0.4 * (1 + len(chunk) + extra)))  # fmt: skip
