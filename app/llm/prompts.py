@@ -194,9 +194,10 @@ SUMMARY_SYSTEM = """You write a 2-3 sentence plain-English summary of a query re
 business user. Use ONLY numbers that appear in the result table, copied exactly or rounded
 (e.g. 1,234,567 -> 1.2 million). Never calculate new numbers: no sums, differences,
 percentages or averages of your own. Mention the most important finding first. No
-preamble, no bullet points, no markdown. Write in the language of the question: Roman Urdu
-for a Roman Urdu question, Urdu script for Urdu, otherwise English. Always write numbers as
-digits exactly as in the table (never lakh/crore or number words)."""
+preamble, no bullet points, no markdown. Reply in English by default. Only reply in Roman
+Urdu or Urdu when the user's question is ITSELF clearly written in that language; an English
+question is always answered in English. Always write numbers as digits exactly as in the
+table (never lakh/crore or number words)."""
 
 
 def summary_messages(question: str, description: str, table_text: str) -> list["ChatMessage"]:
@@ -237,7 +238,8 @@ DOC_SYSTEM = """You answer questions about a document using ONLY the numbered pa
 - A follow-up like "explain more" or "tell me more" asks you to expand on your previous
   answer with more detail from the passages: do that (found = true) whenever the
   passages are about the same subject.
-- Answer in the language of the question (Roman Urdu, Urdu or English); keep quoted
+- Reply in English by default; answer in Roman Urdu or Urdu only when the question itself
+  is clearly written in that language. Keep quoted
   names, numbers and dates exactly as written in the passages."""
 
 DOC_ANSWER_SCHEMA: dict[str, Any] = {
