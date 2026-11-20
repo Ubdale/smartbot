@@ -34,8 +34,15 @@ from app.query.codegen import pandas_code
 from app.query.compare import compare_versions, describe_comparison
 from app.query.doctor import summarize
 from app.query.evidence import find_evidence
-from app.query.executor import PlanError
+from app.query.executor import (
+    PlanError,
+    QueryTimeoutError,
+    columns_from_profile,
+    execute_plan,
+    validate_plan,
+)
 from app.query.planner import history_messages
+from app.query.presentation import choose_chart, describe_plan
 from app.schemas.chat import (
     AskRequest,
     AskResponse,
@@ -46,6 +53,7 @@ from app.schemas.chat import (
     FeedbackRequest,
     MessageOut,
 )
+from app.schemas.query_plan import QueryPlan
 from app.styling import ExportStyle, describe_style, interpret_style
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -247,6 +255,8 @@ def run_ask(
         return _schedule_reply(db, conv, body, previous, user, settings)
     if ds.kind == "table" and is_style_request(body.question, previous):
         return _style_reply(db, conv, body, previous, user, llm, today)
+    if ds.kind == "table" and CHART_REQUEST.search(body.question):
+        return _chart_reply(db, conv, body, ds, previous, user, settings, today)
     fmt = requested_format(body.question)
     if fmt is not None and ds.kind == "table":
         return _file_reply(db, conv, body, previous, user, fmt)
@@ -699,6 +709,75 @@ def _last_table_answer(
         if q.role == "user" and a.role == "assistant" and "table" in answer:
             return q, a
     return None
+
+
+# "Make a graph for this", "show that as a bar chart", "plot it", "visualise this"
+CHART_REQUEST = re.compile(
+    r"\b(bar|line|pie|column)\s+(chart|graph)\b"
+    r"|\b(make|show|draw|plot|create|give|turn|convert|visuali[sz]e)\b"
+    r".{0,30}\b(chart|graph|plot|visuali[sz])\w*\b"
+    r"|\b(chart|graph|plot|visuali[sz]e)\s+(this|that|it|them)\b",
+    re.I,
+)
+
+
+def _wanted_chart_type(question: str) -> str:
+    q = question.lower()
+    if "pie" in q:
+        return "pie"
+    if "line" in q or "trend" in q or "over time" in q:
+        return "line"
+    return "bar"
+
+
+def _chart_reply(
+    db: Session, conv: Conversation, body: AskRequest, ds: Dataset,
+    previous: list[tuple[Message, Message]], user: User, settings: Settings, today: date,
+) -> AskResponse:  # fmt: skip
+    """Redraw the last computed answer as a chart (re-runs its plan with a chart type)."""
+    last = next(
+        (
+            (q, a)
+            for q, a in reversed(previous)
+            if q.role == "user"
+            and a.role == "assistant"
+            and a.plan
+            and (a.plan or {}).get("metric") not in (None, "describe", "rows")
+        ),
+        None,
+    )
+    if last is None:
+        return _save_turn(
+            db, conv, body,
+            content=("Ask a question that groups your data first (for example “revenue "
+                     "by region” or “tasks by status”), then say “make "
+                     "a bar chart”."),
+            status_="answered", plan=None, payload=None, calls=[], user=user,
+        )  # fmt: skip
+    question, answer = last
+    plan = {**(answer.plan or {}), "chart": _wanted_chart_type(body.question)}
+    try:
+        vp = validate_plan(QueryPlan.model_validate(plan), columns_from_profile(ds.columns), today)
+        result = execute_plan(
+            vp, require_parquet(settings, ds), dataset_id=ds.id, version=ds.version
+        )
+    except (PlanError, QueryTimeoutError) as exc:
+        return _save_turn(db, conv, body, content=str(exc), status_="answered", plan=None,
+                          payload=None, calls=[], user=user)  # fmt: skip
+    chart = choose_chart(vp, result)
+    if chart is None:
+        return _save_turn(
+            db, conv, body,
+            content=("That answer can't be charted — a chart needs groups with at least "
+                     "two values (for example “by region” or “by month”). "
+                     "Try grouping your question, then ask for a chart."),
+            status_="answered", plan=None, payload=None, calls=[], user=user,
+        )  # fmt: skip
+    a = Answer("answered", answer.content, vp, result, chart, describe_plan(vp), "template")
+    content = f"Here's “{question.content}” as a {chart.type} chart."
+    return _save_turn(db, conv, body, content=content, status_="answered",
+                      plan=vp.plan.model_dump(mode="json"), payload=_answer_payload(a, ds),
+                      calls=[], user=user)  # fmt: skip
 
 
 def _file_reply(

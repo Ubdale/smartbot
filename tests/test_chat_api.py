@@ -662,3 +662,36 @@ def test_switch_data_source_mid_conversation(
     # The conversation now remembers HR as its active source.
     conv_now = client.get(f"/chat/conversations/{conv}", headers=acct.headers).json()
     assert conv_now["dataset_id"] == hr
+
+
+def test_make_a_chart_redraws_the_last_answer(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    # A grouped answer with no chart, then "make a bar chart" for it.
+    plan = {"metric": "sum", "metric_column": "revenue", "group_by": ["region"]}
+    use_llm(app, FakeLLM([plan], summary="North leads."))
+    first = ask(client, acct, "revenue by region", dataset_id=dataset_id).json()
+    conv = first["conversation_id"]
+    assert first["reply"]["answer"]["chart"] is None  # no chart yet
+
+    resp = client.post(
+        "/chat/ask",
+        headers=acct.headers,
+        json={"question": "make a bar chart for this", "conversation_id": conv},
+    )
+    assert resp.status_code == 200, resp.text
+    reply = resp.json()["reply"]
+    chart = reply["answer"]["chart"]
+    assert chart and chart["type"] == "bar" and chart["x"] == "region"
+    assert "bar chart" in reply["content"]
+    assert reply["answer"]["table"]["rows"]  # the data is there to plot
+
+
+def test_make_a_chart_without_groups_explains(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    use_llm(app, FakeLLM([{"metric": "sum", "metric_column": "revenue"}], summary="Total."))
+    first = ask(client, acct, "total revenue", dataset_id=dataset_id).json()
+    conv = first["conversation_id"]
+    reply = ask(client, acct, "make a graph for this", conversation_id=conv).json()["reply"]
+    assert "can't be charted" in reply["content"] or "groups" in reply["content"]

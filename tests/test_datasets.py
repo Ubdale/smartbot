@@ -344,12 +344,15 @@ def test_asking_about_sheets_lists_them(app: Any, client: TestClient, acct: Acco
     app.dependency_overrides[get_today] = lambda: date(2026, 11, 19)
     app.dependency_overrides[get_llm] = lambda: FakeLLM([])  # intent answers without the model
     content = xlsx_bytes(
-        {"Tasks": pd.DataFrame({"Task": ["a", "b"]}),
-         "People": pd.DataFrame({"Assignee": ["Sara", "Ali", "Zara"]})}
+        {
+            "Tasks": pd.DataFrame({"Task": ["a", "b"]}),
+            "People": pd.DataFrame({"Assignee": ["Sara", "Ali", "Zara"]}),
+        }
     )
     ds = upload(client, acct, "Project.xlsx", content).json()["id"]
     resp = client.post(
-        "/chat/ask", headers=acct.headers,
+        "/chat/ask",
+        headers=acct.headers,
         json={"question": "tell me number of sheets", "dataset_id": ds},
     )
     assert resp.status_code == 200, resp.text
