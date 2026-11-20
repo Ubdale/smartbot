@@ -239,6 +239,8 @@ def run_ask(
     ]
 
     # Requests about the conversation itself, answered directly (no model call).
+    if SHEETS_REQUEST.search(body.question):
+        return _sheets_reply(db, conv, body, ds, user)
     if CODE_REQUEST.search(body.question) and ds.kind == "table":
         return _code_reply(db, conv, body, ds, previous, user)
     if ds.kind == "table" and is_schedule_request(body.question):
@@ -359,6 +361,64 @@ def run_ask(
         db, conv, body, content=content, status_=status_, plan=plan, payload=payload,
         calls=calls, user=user,
     )  # fmt: skip
+
+
+# "How many sheets", "what sheets are there", "tabs in this file"
+SHEETS_REQUEST = re.compile(
+    r"\b(how\s+many|number\s+of|count\s+of|what|which|list|show|name|all)\b"
+    r".{0,24}\b(sheets?|tabs?|worksheets?)\b"
+    r"|\b(sheets?|tabs?|worksheets?)\b.{0,16}\b(in|of|are|does|this|the|file|workbook)\b",
+    re.I,
+)
+
+
+def _workbook_sheets(db: Session, user: User, ds: Dataset) -> list[Dataset]:
+    """All datasets that came from the same uploaded workbook (one per sheet)."""
+    if ds.file_format not in ("xlsx", "xls", "ods"):
+        return [ds]
+    stmt = workspace_scoped(
+        select(Dataset).where(
+            Dataset.original_filename == ds.original_filename,
+            Dataset.file_format == ds.file_format,
+            Dataset.created_by_id == ds.created_by_id,
+        ),
+        Dataset, user,
+    ).order_by(Dataset.created_at)  # fmt: skip
+    found = list(db.scalars(stmt))
+    return found or [ds]
+
+
+def _sheets_reply(
+    db: Session, conv: Conversation, body: AskRequest, ds: Dataset, user: User
+) -> AskResponse:
+    """Answer questions about the workbook's sheets by listing them (each is a source)."""
+    sheets = _workbook_sheets(db, user, ds)
+    if ds.file_format not in ("xlsx", "xls", "ods") or len(sheets) <= 1:
+        content = (
+            f"“{ds.name}” is a single table, not a multi-sheet workbook, so there's "
+            "just one sheet with "
+            f"{len(ds.columns)} columns and {ds.row_count:,} rows."
+        )
+        return _save_turn(db, conv, body, content=content, status_="answered", plan=None,
+                          payload=None, calls=[], user=user)  # fmt: skip
+    rows = [
+        [s.sheet_name or s.name, len(s.columns), s.row_count,
+         "← this one" if s.id == ds.id else "say “switch” or pick it above"]
+        for s in sheets
+    ]  # fmt: skip
+    payload = _report_payload(
+        ["Sheet", "Columns", "Rows", "To ask about it"],
+        rows,
+        f"The workbook “{ds.original_filename}” has {len(sheets)} sheets.",
+    )
+    content = (
+        f"“{ds.original_filename}” has {len(sheets)} sheets, each available as its "
+        "own data source. Switch to one with the “Talking to” picker above, then "
+        "ask about it. You're on "
+        f"“{ds.sheet_name or ds.name}” now."
+    )
+    return _save_turn(db, conv, body, content=content, status_="answered", plan=None,
+                      payload=payload, calls=[], user=user)  # fmt: skip
 
 
 CODE_REQUEST = re.compile(

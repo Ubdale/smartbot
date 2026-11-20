@@ -225,3 +225,40 @@ def test_email_goes_out_through_resend(settings: Settings) -> None:
     assert "up 200 (+20%) since last time" in mail["html"]
     assert "3 new rows" in mail["html"] and "https://app.test/reports" in mail["html"]
     assert [a["filename"] for a in mail["attachments"]] == ["Total-revenue.xlsx", "By-region.xlsx"]
+
+
+def test_patch_reschedule_and_multiple_recipients(app, client, settings) -> None:  # type: ignore[no-untyped-def]
+    acct = signup(client, "owner@acme.com", workspace="Acme")
+    ds = client.post(
+        "/datasets",
+        headers=acct.headers,
+        files={"file": ("sales.csv", (SAMPLE / "sales_orders.csv").read_bytes())},
+    ).json()["id"]
+    app.dependency_overrides[get_llm] = lambda: FakeLLM([REVENUE], summary="Total.")
+    reply = client.post(
+        "/chat/ask",
+        headers=acct.headers,
+        json={"question": "Total revenue", "dataset_id": ds},
+    ).json()["reply"]
+    d = client.post("/digests", headers=acct.headers, json={"message_id": reply["id"]}).json()
+    assert d["recipients"] == ["owner@acme.com"]
+
+    patched = client.patch(
+        f"/digests/{d['id']}",
+        headers=acct.headers,
+        json={
+            "cadence": "weekly",
+            "weekday": 2,
+            "hour": 7,
+            "minute": 30,
+            "recipients": ["a@acme.com", "b@acme.com", "c@acme.com"],
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    body = patched.json()
+    assert body["schedule"] == "every Wednesday at 07:30 (Asia/Karachi)"
+    assert body["recipients"] == ["a@acme.com", "b@acme.com", "c@acme.com"]
+    # It persists on reload.
+    again = client.get("/digests", headers=acct.headers).json()[0]
+    assert again["weekday"] == 2 and again["minute"] == 30
+    assert len(again["recipients"]) == 3

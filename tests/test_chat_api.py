@@ -662,4 +662,3 @@ def test_switch_data_source_mid_conversation(
     # The conversation now remembers HR as its active source.
     conv_now = client.get(f"/chat/conversations/{conv}", headers=acct.headers).json()
     assert conv_now["dataset_id"] == hr
-

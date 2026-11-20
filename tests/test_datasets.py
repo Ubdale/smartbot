@@ -1,4 +1,5 @@
 import io
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -333,3 +334,26 @@ def test_chunked_over_limit_through_real_app_is_413(app: FastAPI, client: TestCl
             content=body(),
         )
     assert resp.status_code == 413
+
+
+def test_asking_about_sheets_lists_them(app: Any, client: TestClient, acct: Account) -> None:
+    from app.api.deps import get_today
+    from app.llm.factory import get_llm
+    from tests.fakes import FakeLLM
+
+    app.dependency_overrides[get_today] = lambda: date(2026, 11, 19)
+    app.dependency_overrides[get_llm] = lambda: FakeLLM([])  # intent answers without the model
+    content = xlsx_bytes(
+        {"Tasks": pd.DataFrame({"Task": ["a", "b"]}),
+         "People": pd.DataFrame({"Assignee": ["Sara", "Ali", "Zara"]})}
+    )
+    ds = upload(client, acct, "Project.xlsx", content).json()["id"]
+    resp = client.post(
+        "/chat/ask", headers=acct.headers,
+        json={"question": "tell me number of sheets", "dataset_id": ds},
+    )
+    assert resp.status_code == 200, resp.text
+    reply = resp.json()["reply"]
+    assert "2 sheets" in reply["content"]
+    sheet_names = {r[0] for r in reply["answer"]["table"]["rows"]}
+    assert sheet_names == {"Tasks", "People"}
