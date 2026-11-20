@@ -113,6 +113,7 @@ class MessageOut(BaseModel):
     id: str
     role: Literal["user", "assistant"]
     content: str
+    dataset_id: str | None = None  # the data source this turn used
     status: Literal["answered", "clarification", "failed"] | None
     answer: FileAnswerOut | CodeAnswerOut | DocumentAnswerOut | AnswerOut | None
     rating: int | None = None  # 1 helpful, -1 wrong

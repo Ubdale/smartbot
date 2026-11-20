@@ -211,7 +211,11 @@ def run_ask(
 ) -> AskResponse:
     if body.conversation_id:
         conv = _conversation(db, user, body.conversation_id)
-        ds = _dataset(db, user, conv.dataset_id)
+        conv_original = conv.dataset_id
+        # A question may switch the chat to another data source (another file or sheet).
+        ds = _dataset(db, user, body.dataset_id or conv.dataset_id)
+        if ds.id != conv.dataset_id:
+            conv.dataset_id = ds.id
     elif body.dataset_id:
         ds = _dataset(db, user, body.dataset_id)
         conv = Conversation(
@@ -220,13 +224,19 @@ def run_ask(
             dataset_id=ds.id,
             title=body.question[:200],
         )
+        conv_original = ds.id
     else:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, "Send dataset_id or conversation_id."
         )
 
     parquet = require_parquet(settings, ds)
-    previous = list(pairwise(conv.messages)) if body.conversation_id else []
+    # Only follow-ups asked against the SAME source carry over as context.
+    previous = [
+        (q, a)
+        for q, a in (pairwise(conv.messages) if body.conversation_id else [])
+        if (q.dataset_id or conv_original) == ds.id
+    ]
 
     # Requests about the conversation itself, answered directly (no model call).
     if CODE_REQUEST.search(body.question) and ds.kind == "table":
@@ -753,7 +763,8 @@ def _save_turn(
 ) -> AskResponse:
     now = datetime.now(UTC)
     position = len(conv.messages) if body.conversation_id else 0
-    question = Message(role="user", content=body.question, position=position, created_at=now)
+    question = Message(role="user", content=body.question, position=position,
+                       dataset_id=conv.dataset_id, created_at=now)  # fmt: skip
     reply = Message(
         role="assistant",
         content=content,
@@ -761,6 +772,7 @@ def _save_turn(
         plan=plan,
         answer=payload,
         position=position + 1,
+        dataset_id=conv.dataset_id,
         created_at=now,
     )
     conv.messages.extend([question, reply])
@@ -856,7 +868,7 @@ def _export_parts(
         reply,
         answer,
         question.content if question else "AskData answer",
-        db.get(Dataset, conv.dataset_id),
+        db.get(Dataset, reply.dataset_id or conv.dataset_id),
         style,
     )
 
@@ -925,7 +937,7 @@ def answer_evidence(
     explanation = answer.get("explanation") or {}
     if not reply.plan or "table" not in answer:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "This answer has no rows behind it.")
-    ds = _dataset(db, user, conv.dataset_id)
+    ds = _dataset(db, user, reply.dataset_id or conv.dataset_id)
     if explanation.get("dataset_version") not in (None, ds.version):
         raise HTTPException(
             status.HTTP_409_CONFLICT,

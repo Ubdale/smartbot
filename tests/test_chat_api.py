@@ -626,3 +626,40 @@ def test_pdf_report(app: FastAPI, client: TestClient, acct: Account, dataset_id:
         client.get(f"/chat/messages/{reply['id']}/export.pdf", headers=other.headers).status_code
         == 404
     )
+
+
+def test_switch_data_source_mid_conversation(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    # A second dataset in the same workspace.
+    hr = client.post(
+        "/datasets",
+        headers=acct.headers,
+        files={"file": ("hr.csv", (SAMPLE / "hr_employees.csv").read_bytes())},
+    ).json()["id"]
+    plan_sales = {"metric": "sum", "metric_column": "revenue"}
+    plan_hr = {"metric": "count"}
+    use_llm(app, FakeLLM([plan_sales, plan_hr], summary="ok"))
+
+    first = ask(client, acct, "total revenue", dataset_id=dataset_id).json()
+    conv = first["conversation_id"]
+    assert first["reply"]["dataset_id"] == dataset_id
+
+    # Same conversation, but now point at the HR dataset.
+    resp = client.post(
+        "/chat/ask",
+        headers=acct.headers,
+        json={"question": "how many employees", "conversation_id": conv, "dataset_id": hr},
+    )
+    assert resp.status_code == 200, resp.text
+    reply = resp.json()["reply"]
+    assert reply["dataset_id"] == hr  # answered against the switched source
+    # A plain count over the HR dataset: one number, computed from that file.
+    table = reply["answer"]["table"]
+    assert table["columns"] == ["count"]
+    assert len(table["rows"]) == 1 and isinstance(table["rows"][0][0], int)
+
+    # The conversation now remembers HR as its active source.
+    conv_now = client.get(f"/chat/conversations/{conv}", headers=acct.headers).json()
+    assert conv_now["dataset_id"] == hr
+

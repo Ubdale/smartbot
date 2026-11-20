@@ -38,6 +38,11 @@ class Message(IdMixin, TimestampMixin, Base):
         ForeignKey("conversations.id", ondelete="CASCADE"), index=True
     )
     position: Mapped[int] = mapped_column(Integer)  # order within the conversation
+    # The dataset this turn was asked against (a chat can switch sources). Null for old
+    # rows and non-data turns, then treated as the conversation's own dataset.
+    dataset_id: Mapped[str | None] = mapped_column(
+        ForeignKey("datasets.id", ondelete="SET NULL"), nullable=True
+    )
     role: Mapped[str] = mapped_column(String(20))  # user | assistant
     # The question (user) or the summary / clarification / error text (assistant).
     content: Mapped[str] = mapped_column(Text)
