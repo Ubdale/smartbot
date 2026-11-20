@@ -40,6 +40,8 @@ class DatasetOut(DatasetSummary):
 class UploadOut(DatasetOut):
     sheet_names: list[str]  # all sheets in the workbook (empty for CSV)
     detected_encoding: str | None
+    # Other sheets of a workbook that were added as their own datasets.
+    extra_sheets: list[str] = []
 
 
 class ChangesOut(BaseModel):

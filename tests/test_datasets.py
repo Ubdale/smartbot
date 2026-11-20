@@ -205,7 +205,11 @@ def test_xlsx_first_sheet_by_default(client: TestClient, acct: Account) -> None:
     assert body["name"] == "Budget 2026"
     assert body["sheet_name"] == "Summary"
     assert body["sheet_names"] == ["Summary", "Raw"]
+    assert body["extra_sheets"] == ["Raw"]  # the other sheet became its own dataset
     assert body["row_count"] == 2
+    # Both sheets are now selectable datasets.
+    names = {d["name"] for d in client.get("/datasets", headers=acct.headers).json()}
+    assert {"Budget 2026", "Budget 2026 - Raw"} <= names
     c = cols(body)
     assert c["Month"]["kind"] in ("date", "datetime")
     assert c["Revenue"]["kind"] == "number"

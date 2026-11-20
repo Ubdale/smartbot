@@ -17,7 +17,9 @@ from app import audit, learning
 from app.api.deps import AppSettings, CurrentUser, DbSession, Today, not_found, workspace_scoped
 from app.connectors.csv_xlsx import (
     IMAGE_MIME,
+    SPREADSHEET_ENGINES,
     IngestError,
+    IngestResult,
     Transcriber,
     detect_format,
     ingest_file,
@@ -170,6 +172,30 @@ def _get_dataset(db: DbSession, user: User, dataset_id: str) -> Dataset:
     return ds
 
 
+def _ingest_sheet(
+    settings: Settings,
+    workspace_id: str,
+    original: Path,
+    fmt: str,
+    sheet: str,
+) -> tuple[str, "IngestResult"] | None:
+    """Copy one sheet of a workbook into its own dataset folder + Parquet (no DB writes).
+    Returns (dataset_id, ingest result), or None if the sheet is empty/unreadable."""
+    storage = _storage(settings)
+    dataset_id = str(uuid.uuid4())
+    folder = storage.create_dir(workspace_id, dataset_id)
+    try:
+        src = folder / f"original.{fmt}"
+        shutil.copy(original, src)
+        table = ingest_file(src, fmt, folder / PARQUET_NAME, sheet=sheet)  # type: ignore[arg-type]
+        storage.persist(workspace_id, dataset_id)
+        return dataset_id, table
+    except Exception:
+        log.warning("Extra sheet %r skipped", sheet, exc_info=True)
+        storage.delete(workspace_id, dataset_id)
+        return None
+
+
 @router.post("", response_model=UploadOut, status_code=status.HTTP_201_CREATED)
 async def upload_dataset(
     file: Annotated[
@@ -276,10 +302,46 @@ async def upload_dataset(
         raise
 
     _prepare_search(settings, ds)
+
+    # A workbook with several sheets: make each other sheet its own dataset, so columns
+    # that live on another sheet (e.g. Assignee on "Sheet2") are queryable too.
+    extra_sheets: list[str] = []
+    if table is not None and fmt in SPREADSHEET_ENGINES and mode != "document":
+        base = (name or "").strip() or Path(filename).stem or "Untitled"
+        for other in [s for s in table.sheet_names if s != table.sheet_name]:
+            made = await run_in_threadpool(
+                _ingest_sheet, settings, user.workspace_id, original, fmt, other
+            )
+            if made is None:
+                continue
+            sib_id, sib = made
+            sib_ds = Dataset(
+                id=sib_id,
+                workspace_id=user.workspace_id,
+                created_by_id=user.id,
+                name=f"{base} - {other}"[:200],
+                original_filename=filename[:255],
+                file_format=fmt,
+                sheet_name=sib.sheet_name,
+                size_bytes=size,
+                row_count=sib.profile.row_count,
+                columns=[c.to_dict() for c in sib.profile.columns],
+                kind="table",
+                extraction=sib.extraction,
+            )
+            db.add(sib_ds)
+            audit.record(db, user, "dataset.uploaded", target_type="dataset",
+                         target_id=sib_id, name=sib_ds.name, file=filename[:255],
+                         kind="table")  # fmt: skip
+            db.commit()
+            _prepare_search(settings, sib_ds)
+            extra_sheets.append(other)
+
     return UploadOut(
         **DatasetOut.model_validate(ds).model_dump(),
         sheet_names=table.sheet_names if table else [],
         detected_encoding=table.encoding if table else None,
+        extra_sheets=extra_sheets,
     )
 
 
