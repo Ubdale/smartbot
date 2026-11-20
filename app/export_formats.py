@@ -28,8 +28,8 @@ from app.exporting import (
     BAND,
     BRAND,
     _pretty,
-    answer_title,
     build_answer_workbook,
+    export_title,
     summable_columns,
 )
 from app.pdf_report import _fmt, build_answer_pdf
@@ -130,10 +130,10 @@ def _is_number(s: str) -> bool:
 
 
 def build_answer_png(
-    *, question: str, table: dict[str, Any], chart: dict[str, Any] | None,
-    explanation: dict[str, Any] | None = None, **_: Any,
+    *, table: dict[str, Any], chart: dict[str, Any] | None,
+    explanation: dict[str, Any] | None = None, dataset_name: str = "", **_: Any,
 ) -> bytes:  # fmt: skip
-    title = answer_title(question, (explanation or {}).get("description", ""))
+    title = export_title(explanation, dataset_name)
     png = render_chart_png(
         chart, table.get("columns", []), table.get("rows", []), title=title,
         y_label=_pretty(chart["y"]) if chart else "", width=10, height=5.6, dpi=200,
@@ -181,7 +181,7 @@ def build_answer_docx(
     """A Word file of the table: a title and the formatted table."""
     explanation = explanation or {}
     styled, style, decimals = _prepare(table, style, today)
-    title = style.title or answer_title(question, explanation.get("description", ""))
+    title = style.title or export_title(explanation, dataset_name)
     doc = Document()
     section = doc.sections[0]
     if len(styled.columns) > 4:
@@ -252,7 +252,7 @@ def build_answer_pptx(
     """Slides of the table (12 rows per slide)."""
     explanation = explanation or {}
     styled, style, decimals = _prepare(table, style, today)
-    title = style.title or answer_title(question, explanation.get("description", ""))
+    title = style.title or export_title(explanation, dataset_name)
     prs = Presentation()
     prs.slide_width, prs.slide_height = PptInches(13.333), PptInches(7.5)
     blank = prs.slide_layouts[6]

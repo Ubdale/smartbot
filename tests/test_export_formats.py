@@ -41,6 +41,8 @@ BAR = {"type": "bar", "x": "region", "y": "sum_revenue"}
 COMMON: dict[str, Any] = {
     "question": "Revenue by region", "summary": "North leads.", "table": TABLE, "chart": BAR,
     "dataset_name": "sales.csv", "created_at": datetime.now(UTC), "today": TODAY,
+    "explanation": {"plan": {"metric": "sum", "metric_column": "revenue",
+                             "group_by": ["region"]}},
 }  # fmt: skip
 
 
@@ -107,7 +109,7 @@ def test_word_file_has_only_the_formatted_table() -> None:
         highlights=[Highlight(column="region", op="=", value="North", color="yellow")],
     )
     doc = Document(io.BytesIO(build_answer_docx(**COMMON, style=style)))
-    assert doc.paragraphs[0].text == "Revenue by region"
+    assert doc.paragraphs[0].text == "Total revenue by region"
     assert all("North leads" not in p.text for p in doc.paragraphs)  # no response text
     assert len(doc.inline_shapes) == 0  # no chart: charts export as PNG
     table = doc.tables[0]

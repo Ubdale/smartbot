@@ -64,45 +64,79 @@ def _number_format(values: list[Any], column: str = "") -> str | None:
     return "#,##0.00"
 
 
-_LEAD_NOISE = re.compile(
-    r"^(if\s+i\s+(tell|ask)\s+you\s+to|can\s+you|could\s+you|would\s+you|will\s+you|please|pls|"
-    r"kindly|i\s+want(\s+you)?\s+to|i\s+need|give\s+me|show\s+me|get\s+me|make(\s+me)?|"
-    r"create|build|prepare|generate|export|download|list|an?|the|"
-    r"(sheet|spreadsheet|excel|file|table|report|list|workbook)(\s+(which|that)(\s+will)?"
-    r"\s+(have|has|show|shows|contain|contains|include|includes)|\s+(with|of|for))?)\s+",
-    re.I,
-)
-_TAIL_NOISE = re.compile(
-    r"\s+((would|will|can|could)\s+you(\s+(do|make|give)(\s+(it|that|this|me))?)?|please|pls"
-    r"|thanks?(\s+you)?|for\s+me|in\s+(an?\s+)?(excel|sheet|pdf|file))$",
-    re.I,
-)
+_METRIC_TITLE = {"sum": "Total", "avg": "Average", "min": "Lowest", "max": "Highest"}
+_OP_TITLE = {"=": "is", "!=": "is not", ">": "over", ">=": "at least", "<": "under",
+             "<=": "at most", "in": "is", "contains": "contains", "between": "between"}  # fmt: skip
 
 
-def _clean_question(question: str) -> str:
-    """“if i tell you to make a sheet which will have task of Sara would you do it?”
-    becomes “Task of Sara”: the request wording goes, the subject stays."""
-    q = question.strip().rstrip("?.! ")
-    for _ in range(8):
-        shorter = _TAIL_NOISE.sub("", _LEAD_NOISE.sub("", q)).strip(" ,.?!")
-        if shorter == q:
-            break
-        q = shorter
-    return q[:1].upper() + q[1:]
+def _name(column: str) -> str:
+    return re.sub(r"[_\s]+", " ", column).strip()
 
 
-def answer_title(question: str, description: str) -> str:
-    """A clean title for exports: never the raw prompt. The question with the request
-    wording removed when that reads well, else what was computed."""
-    cleaned = _clean_question(question)
-    if 3 <= len(cleaned) <= 80:
-        return cleaned
-    d = re.sub(r";\s*(showing up to|sorted by).*$", "", description).rstrip(". ")
-    if d:
-        return d[:120]
-    if len(cleaned) >= 3:
-        return cleaned[:77].rsplit(" ", 1)[0] + "…"
-    return "AskData answer"
+def _value(v: Any) -> str:
+    if isinstance(v, list):
+        shown = [_value(x) for x in v[:3]]
+        return " or ".join(shown) + (" ..." if len(v) > 3 else "")
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    if isinstance(v, int) and not isinstance(v, bool):
+        return f"{v:,}"
+    return str(v)
+
+
+def export_title(explanation: dict[str, Any] | None, dataset_name: str = "") -> str:
+    """A title for downloads, written by code from what was computed (never the user's
+    message, which may be chatty, Roman Urdu or a question): "Total revenue by region
+    (2025)", "Rows where Assignee is Sara Ahmed", "Columns of Task go for QC"."""
+    explanation = explanation or {}
+    plan = explanation.get("plan") or {}
+    metric = plan.get("metric")
+    if metric == "describe":
+        return f"Columns of {dataset_name}" if dataset_name else "Columns of the data"
+    if not metric:
+        # Reports computed without a plan (data doctor, what changed): their description.
+        d = re.sub(r";\s*(showing up to|sorted by).*$", "", explanation.get("description", ""))
+        return d.rstrip(". ")[:120] or dataset_name or "AskData answer"
+
+    col = _name(plan.get("metric_column") or "")
+    if metric == "rows":
+        what = "Rows"
+    elif metric == "count":
+        what = "Count"
+    elif metric == "count_distinct":
+        what = f"Distinct {col}"
+    else:
+        what = f"{_METRIC_TITLE.get(metric, metric)} {col}".strip()
+
+    groups = [_name(g) for g in plan.get("group_by") or []]
+    if plan.get("time_grain"):
+        groups.insert(0, str(plan["time_grain"]))
+    sort, limit = plan.get("sort") or {}, int(plan.get("limit") or 0)
+    # "Top 5 customers" only when asked for: 20 is just the default number of rows.
+    if groups and sort.get("by") == "value" and limit and limit < 20:
+        top = "Top" if sort.get("direction", "desc") == "desc" else "Bottom"
+        title = f"{top} {limit} {' and '.join(groups)} by {what[0].lower() + what[1:]}"
+    else:
+        title = what + (f" by {' and '.join(groups)}" if groups else "")
+
+    conditions = []
+    for f in (plan.get("filters") or [])[:2]:
+        column, op, value = _name(f.get("column", "")), f.get("op"), f.get("value")
+        if op == "about":
+            conditions.append(f"{column} about \u201c{value}\u201d")
+        elif value is None:
+            conditions.append(f"{column} {'is empty' if op == '=' else 'is filled in'}")
+        elif op == "between" and isinstance(value, list) and len(value) == 2:
+            conditions.append(f"{column} between {_value(value[0])} and {_value(value[1])}")
+        else:
+            conditions.append(f"{column} {_OP_TITLE.get(op, op)} {_value(value)}")
+    if conditions:
+        more = " ..." if len(plan.get("filters") or []) > 2 else ""
+        title += " where " + " and ".join(conditions) + more
+    period = (explanation.get("date_range") or {}).get("label")
+    if period:
+        title += f" ({period})"
+    return title[:1].upper() + title[1:150]
 
 
 def _sheet_name(text: str) -> str:
@@ -124,7 +158,7 @@ def build_answer_workbook(
     columns: list[str] = table.get("columns", [])
     rows: list[list[Any]] = table.get("rows", [])
     explanation = explanation or {}
-    title = answer_title(question, explanation.get("description", ""))
+    title = export_title(explanation, dataset_name)
     plan = explanation.get("plan") or {}
 
     # Formatting the user asked for: applied by code (sort, hide, highlight, summaries).

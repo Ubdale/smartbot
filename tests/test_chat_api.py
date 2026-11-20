@@ -485,12 +485,13 @@ def test_excel_request_gives_a_styled_workbook(
     resp = client.get(f"/chat/messages/{answer_id}/export.xlsx", headers=acct.headers)
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("application/vnd.openxmlformats")
-    assert 'filename="Revenue-by-region.xlsx"' in resp.headers["content-disposition"]
+    # Named after what was computed, not after the chat message.
+    assert 'filename="Total-revenue-by-region.xlsx"' in resp.headers["content-disposition"]
 
     ws = load_workbook(io.BytesIO(resp.content)).active
     assert ws is not None
     # Just the table: no title, summary or other text from the response.
-    assert ws.title == "Revenue by region"
+    assert ws.title == "Total revenue by region"
     assert [c.value for c in ws[1]][:2] == ["region", "Total revenue"]
     assert ws["A1"].font.bold
     assert ws["A1"].fill.fgColor.rgb.endswith("4F46E5")
@@ -541,24 +542,50 @@ def test_excel_titles_ids_totals_and_about_sheet() -> None:
 
     from openpyxl import load_workbook
 
-    from app.exporting import answer_title, build_answer_workbook
+    from app.exporting import build_answer_workbook, export_title
 
-    assert answer_title("Revenue by region", "x") == "Revenue by region"
+    # Titles come from what was computed, never from the chat message.
+    assert export_title({"plan": {"metric": "describe"}}, "Tasks") == "Columns of Tasks"
     assert (
-        answer_title(
-            "if i tell you to make a sheet which will have task of Sara would you do it?",
-            "Rows showing Summary, where Assignee is one of Sara; showing up to 50 rows.",
+        export_title(
+            {
+                "plan": {
+                    "metric": "rows",
+                    "filters": [
+                        {"column": "Assignee", "op": "in", "value": ["Sara Ahmed", "Sara Khan"]}
+                    ],
+                }
+            }
         )
-        == "Task of Sara"
+        == "Rows where Assignee is Sara Ahmed or Sara Khan"
     )
-    assert answer_title("give me formatted excel", "Revenue by region.") == "Formatted excel"
     assert (
-        answer_title(
-            "if i tell you to make a sheet which will have task of Muhammad Ubdale and "
-            "Areesha and Zarmeen would you do it?",
-            "",
+        export_title(
+            {
+                "plan": {
+                    "metric": "sum",
+                    "metric_column": "revenue",
+                    "group_by": ["customer"],
+                    "limit": 5,
+                    "sort": {"by": "value", "direction": "desc"},
+                }
+            }
         )
-        == "Task of Muhammad Ubdale and Areesha and Zarmeen"
+        == "Top 5 customer by total revenue"
+    )
+    assert (
+        export_title(
+            {
+                "plan": {
+                    "metric": "count",
+                    "group_by": ["Status"],
+                    "limit": 20,
+                    "sort": {"by": "value"},
+                },
+                "date_range": {"label": "last quarter"},
+            }
+        )
+        == "Count by Status (last quarter)"
     )
 
     data = build_answer_workbook(
@@ -566,11 +593,12 @@ def test_excel_titles_ids_totals_and_about_sheet() -> None:
         created_at=datetime.now(UTC),
         table={"columns": ["region", "sum_revenue"],
                "rows": [["North", 1500.5], ["South", 250.25]]},
-        explanation={"description": "Total revenue, by region.", "plan": {"metric": "sum"},
+        explanation={"description": "Total revenue, by region.",
+                     "plan": {"metric": "sum", "metric_column": "revenue", "group_by": ["region"]},
                      "date_range": {"label": "2025", "start": "2025-01-01", "end": "2025-12-31"}},
     )  # fmt: skip
     wb = load_workbook(io.BytesIO(data))
-    assert wb.sheetnames == ["Revenue by region"]  # one sheet: the table
+    assert wb.sheetnames == ["Total revenue by region (2025)"]  # one sheet: the table
     ws = wb.active
     assert ws is not None
     assert ws.max_row == 3  # no automatic total row unless asked for
@@ -592,7 +620,7 @@ def test_pdf_report(app: FastAPI, client: TestClient, acct: Account, dataset_id:
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/pdf"
     assert resp.content.startswith(b"%PDF")
-    assert 'filename="Revenue-by-region.pdf"' in resp.headers["content-disposition"]
+    assert 'filename="Total-revenue-by-region.pdf"' in resp.headers["content-disposition"]
     other = signup(client, "spy2@other.com", workspace="Other")
     assert (
         client.get(f"/chat/messages/{reply['id']}/export.pdf", headers=other.headers).status_code

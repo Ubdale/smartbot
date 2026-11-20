@@ -24,6 +24,7 @@ from app.core.db import get_session_factory
 from app.digests import describe_schedule, is_schedule_request, parse_schedule
 from app.documents.answer import DocumentAnswer, answer_document_question
 from app.export_formats import FORMATS, NothingToExportError
+from app.exporting import export_title
 from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
 from app.llm.embeddings import get_embedder
 from app.llm.factory import get_llm, get_summary_llm
@@ -900,7 +901,9 @@ def export_answer(
     audit.record(db, user, "answer.exported", target_type="message", target_id=reply.id,
                  format=fmt)  # fmt: skip
     db.commit()
-    return _download(content, media_type, question, fmt)
+    # The file is named after what was computed, like its title (not the chat message).
+    name = export_title(answer.get("explanation"), ds.name if ds else "")
+    return _download(content, media_type, name, fmt)
 
 
 @router.get("/messages/{message_id}/evidence", response_model=EvidenceOut)

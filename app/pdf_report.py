@@ -5,7 +5,7 @@ from typing import Any
 
 from fpdf import FPDF
 
-from app.exporting import _pretty, answer_title, is_id_like, summable_columns
+from app.exporting import _pretty, export_title, is_id_like, summable_columns
 from app.styling import ExportStyle, apply_style, color
 
 BRAND = (79, 70, 229)
@@ -76,7 +76,7 @@ def build_answer_pdf(
     )  # fmt: skip
     columns = styled.columns
     rows = styled.rows[:MAX_ROWS]
-    title = style.title or answer_title(question, explanation.get("description", ""))
+    title = style.title or export_title(explanation, dataset_name)
     header_fill, header_text = styled.header or ("4F46E5", "FFFFFF")
     decimals = frozenset(
         c
