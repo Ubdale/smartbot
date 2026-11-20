@@ -25,6 +25,7 @@ class DigestIn(BaseModel):
     cadence: Literal["daily", "weekly"] = "weekly"
     weekday: int = Field(default=0, ge=0, le=6)  # 0 = Monday
     hour: int = Field(default=9, ge=0, le=23)
+    minute: int = Field(default=0, ge=0, le=59)
     timezone: str | None = Field(default=None, max_length=64)
     recipients: list[EmailStr] | None = Field(default=None, max_length=20)
 
@@ -34,6 +35,7 @@ class DigestPatch(BaseModel):
     cadence: Literal["daily", "weekly"] | None = None
     weekday: int | None = Field(default=None, ge=0, le=6)
     hour: int | None = Field(default=None, ge=0, le=23)
+    minute: int | None = Field(default=None, ge=0, le=59)
     timezone: str | None = Field(default=None, max_length=64)
     recipients: list[EmailStr] | None = Field(default=None, max_length=20)
     active: bool | None = None
@@ -49,6 +51,7 @@ class DigestOut(BaseModel):
     cadence: str
     weekday: int
     hour: int
+    minute: int
     timezone: str
     schedule: str  # "every Monday at 09:00 (Asia/Karachi)"
     recipients: list[str]
@@ -74,7 +77,7 @@ def _out(db: DbSession, d: Digest) -> DigestOut:
     return DigestOut(
         id=d.id, title=d.title, dataset_id=d.dataset_id, dataset_name=ds.name if ds else "",
         questions=[i["question"] for i in d.items], cadence=d.cadence, weekday=d.weekday,
-        hour=d.hour, timezone=d.timezone, schedule=describe_schedule(d),
+        hour=d.hour, minute=d.minute, timezone=d.timezone, schedule=describe_schedule(d),
         recipients=list(d.recipients), active=d.active, next_run_at=d.next_run_at,
         last_run_at=d.last_run_at,
     )  # fmt: skip
@@ -135,10 +138,11 @@ def create_digest(db: DbSession, user: User, body: DigestIn, default_tz: str) ->
     d = Digest(
         workspace_id=user.workspace_id, user_id=user.id, dataset_id=conv.dataset_id,
         title=(body.title or question.content)[:200], items=[item], cadence=body.cadence,
-        weekday=body.weekday, hour=body.hour, timezone=tz,
+        weekday=body.weekday, hour=body.hour, minute=body.minute, timezone=tz,
         recipients=[str(r) for r in body.recipients] if body.recipients else [user.email],
         active=True,
-        next_run_at=next_run(body.cadence, body.weekday, body.hour, tz, datetime.now(UTC)),
+        next_run_at=next_run(body.cadence, body.weekday, body.hour, body.minute, tz,
+                             datetime.now(UTC)),
     )  # fmt: skip
     db.add(d)
     db.flush()
@@ -166,7 +170,7 @@ def add_digest(body: DigestIn, user: CurrentUser, db: DbSession,
 def update_digest(digest_id: str, body: DigestPatch, user: CurrentUser,
                   db: DbSession) -> DigestOut:  # fmt: skip
     d = _own(db, user, digest_id)
-    for name in ("title", "cadence", "weekday", "hour", "timezone", "active"):
+    for name in ("title", "cadence", "weekday", "hour", "minute", "timezone", "active"):
         value = getattr(body, name)
         if value is not None:
             setattr(d, name, value)
@@ -178,7 +182,7 @@ def update_digest(digest_id: str, body: DigestPatch, user: CurrentUser,
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "A digest needs at least one question; delete it."
             )
-    d.next_run_at = next_run(d.cadence, d.weekday, d.hour, d.timezone, datetime.now(UTC))
+    d.next_run_at = next_run(d.cadence, d.weekday, d.hour, d.minute, d.timezone, datetime.now(UTC))
     db.commit()
     return _out(db, d)
 

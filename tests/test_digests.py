@@ -31,23 +31,25 @@ BY_REGION = {"metric": "sum", "metric_column": "revenue", "group_by": ["region"]
 def test_next_run_in_the_users_timezone() -> None:
     # Thursday 2026-11-19 10:00 UTC = 15:00 in Karachi (UTC+5).
     now = datetime(2026, 11, 19, 10, 0, tzinfo=UTC)
-    weekly = next_run("weekly", 0, 9, "Asia/Karachi", now)  # Monday 09:00 Karachi
+    weekly = next_run("weekly", 0, 9, 0, "Asia/Karachi", now)  # Monday 09:00 Karachi
     assert weekly == datetime(2026, 11, 23, 4, 0, tzinfo=UTC)
-    daily = next_run("daily", 0, 9, "Asia/Karachi", now)  # tomorrow 09:00 Karachi
+    daily = next_run("daily", 0, 9, 0, "Asia/Karachi", now)  # tomorrow 09:00 Karachi
     assert daily == datetime(2026, 11, 20, 4, 0, tzinfo=UTC)
-    later_today = next_run("daily", 0, 18, "Asia/Karachi", now)
-    assert later_today == datetime(2026, 11, 19, 13, 0, tzinfo=UTC)
-    assert next_run("weekly", 0, 9, "Not/AZone", now).tzinfo is not None  # falls back to UTC
+    later_today = next_run("daily", 0, 18, 30, "Asia/Karachi", now)
+    assert later_today == datetime(2026, 11, 19, 13, 30, tzinfo=UTC)
+    assert next_run("weekly", 0, 9, 0, "Not/AZone", now).tzinfo is not None  # falls back to UTC
 
 
 def test_schedule_requests() -> None:
-    assert parse_schedule("send this every Friday at 5pm").__dict__ == {
+    assert parse_schedule("send this every Friday at 5:30pm").__dict__ == {
         "cadence": "weekly",
         "weekday": 4,
         "hour": 17,
+        "minute": 30,
     }
     assert parse_schedule("email me daily").cadence == "daily"
     assert parse_schedule("top 10 customers every tuesday").hour == 9  # "10" isn't a time
+    assert parse_schedule("email me daily at 07:05").minute == 5
     for q in ["send me this every Monday at 9", "email this weekly", "har monday bhejo"]:
         assert is_schedule_request(q), q
     for q in ["weekly revenue trend", "orders every monday", "send me top 10 customers"]:
@@ -106,9 +108,11 @@ def test_schedule_from_chat_run_now_and_inbox(
 
     # Edit, then a teammate/outsider can't see or touch it.
     patched = client.patch(
-        f"/digests/{d['id']}", headers=acct.headers, json={"cadence": "daily", "hour": 18}
+        f"/digests/{d['id']}",
+        headers=acct.headers,
+        json={"cadence": "daily", "hour": 18, "minute": 45},
     ).json()
-    assert patched["schedule"] == "every day at 18:00 (Asia/Karachi)"
+    assert patched["schedule"] == "every day at 18:45 (Asia/Karachi)"
     other = signup(client, "spy@other.com", workspace="Other")
     assert client.delete(f"/digests/{d['id']}", headers=other.headers).status_code == 404
     assert client.get("/digests", headers=other.headers).json() == []

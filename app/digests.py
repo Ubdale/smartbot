@@ -46,10 +46,11 @@ def zone(name: str) -> ZoneInfo:
         return ZoneInfo("UTC")
 
 
-def next_run(cadence: str, weekday: int, hour: int, tz: str, after: datetime) -> datetime:
+def next_run(cadence: str, weekday: int, hour: int, minute: int, tz: str,
+             after: datetime) -> datetime:  # fmt: skip
     """The first scheduled time strictly after `after` (returned in UTC)."""
     local = after.astimezone(zone(tz))
-    candidate = local.replace(hour=hour, minute=0, second=0, microsecond=0)
+    candidate = local.replace(hour=hour, minute=minute or 0, second=0, microsecond=0)
     if cadence == "weekly":
         candidate += timedelta(days=(weekday - candidate.weekday()) % 7)
     while candidate <= local:
@@ -62,6 +63,7 @@ class Schedule:
     cadence: str  # daily | weekly
     weekday: int
     hour: int
+    minute: int
 
 
 _TIME = re.compile(r"\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\b", re.I)
@@ -92,9 +94,10 @@ def parse_schedule(text: str) -> Schedule:
     daily = bool(
         re.search(r"\b(daily|every\s+(day|morning)|each\s+day|har\s+(din|roz))\b", lowered)
     )
-    hour = 9
+    hour, minute = 9, 0
     for m in _TIME.finditer(text):
         h = int(m[1])
+        mins = int(m[2]) if m[2] else 0
         suffix = (m[3] or "").replace(".", "").lower()
         if not suffix and not m[2] and not m[0].lower().startswith("at"):
             continue  # a bare number ("top 10") isn't a time
@@ -102,17 +105,17 @@ def parse_schedule(text: str) -> Schedule:
             h += 12
         if suffix == "am" and h == 12:
             h = 0
-        if 0 <= h <= 23:
-            hour = h
+        if 0 <= h <= 23 and 0 <= mins <= 59:
+            hour, minute = h, mins
             break
     if "evening" in lowered and hour == 9:
         hour = 18
-    return Schedule("daily" if daily else "weekly", weekday, hour)
+    return Schedule("daily" if daily else "weekly", weekday, hour, minute)
 
 
 def describe_schedule(d: Digest) -> str:
     when = "every day" if d.cadence == "daily" else f"every {WEEKDAYS[d.weekday].capitalize()}"
-    return f"{when} at {d.hour:02d}:00 ({d.timezone})"
+    return f"{when} at {d.hour:02d}:{(d.minute or 0):02d} ({d.timezone})"
 
 
 # --- running --------------------------------------------------------------------------
@@ -179,8 +182,8 @@ def run_digest(
     owner = db.get(User, digest.user_id)
     run.emailed, run.email_note = send_digest_email(settings, digest, run, ds, owner)
     digest.last_run_at = now
-    digest.next_run_at = next_run(digest.cadence, digest.weekday, digest.hour, digest.timezone,
-                                  now)  # fmt: skip
+    digest.next_run_at = next_run(digest.cadence, digest.weekday, digest.hour, digest.minute,
+                                  digest.timezone, now)  # fmt: skip
     return run
 
 
@@ -198,7 +201,7 @@ def run_due_digests(db: Session, settings: Settings, *, llm: LLMProvider | None,
         except Exception:
             log.exception("digest %s failed", digest.id)
             digest.next_run_at = next_run(digest.cadence, digest.weekday, digest.hour,
-                                          digest.timezone, now)  # fmt: skip
+                                          digest.minute, digest.timezone, now)  # fmt: skip
         db.commit()
     return runs
 

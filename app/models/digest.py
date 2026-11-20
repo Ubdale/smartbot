@@ -28,6 +28,7 @@ class Digest(IdMixin, TimestampMixin, Base):
     cadence: Mapped[str] = mapped_column(String(10))  # daily | weekly
     weekday: Mapped[int] = mapped_column(Integer, default=0)  # 0 = Monday (weekly only)
     hour: Mapped[int] = mapped_column(Integer, default=9)  # local time, 0-23
+    minute: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # 0-59
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Karachi")
     recipients: Mapped[list[str]] = mapped_column(JSON)
     active: Mapped[bool] = mapped_column(Boolean, default=True)

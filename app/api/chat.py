@@ -435,7 +435,7 @@ def _schedule_reply(
         )  # fmt: skip
     s = parse_schedule(body.question)
     digest = create_digest(db, user, DigestIn(message_id=last.id, cadence=s.cadence,
-                                              weekday=s.weekday, hour=s.hour),
+                                              weekday=s.weekday, hour=s.hour, minute=s.minute),
                            settings.default_timezone)  # fmt: skip
     where = ", ".join(digest.recipients)
     content = (f"Scheduled: “{digest.title}” {describe_schedule(digest)}, with fresh "
