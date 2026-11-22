@@ -4,6 +4,7 @@ import json
 import logging
 import queue
 import re
+import secrets
 import threading
 from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime
@@ -29,7 +30,15 @@ from app.exporting import _pretty, export_title
 from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
 from app.llm.embeddings import get_embedder
 from app.llm.factory import get_llm, get_summary_llm
-from app.models import Conversation, Dataset, Message, SavedAnswer, UsageEvent, User
+from app.models import (
+    Conversation,
+    Dataset,
+    Message,
+    SavedAnswer,
+    ShareLink,
+    UsageEvent,
+    User,
+)
 from app.query.answer import Answer, answer_question
 from app.query.codegen import pandas_code
 from app.query.compare import compare_versions, describe_comparison
@@ -1225,3 +1234,59 @@ def delete_saved(saved_id: str, user: CurrentUser, db: DbSession) -> None:
         raise not_found("Saved answer")
     db.delete(saved)
     db.commit()
+
+
+class ShareOut(BaseModel):
+    token: str
+
+
+class SharedAnswerOut(BaseModel):
+    question: str
+    content: str
+    answer: dict[str, Any] | None
+    dataset_name: str
+    created_at: datetime
+
+
+@router.post("/messages/{message_id}/share", response_model=ShareOut)
+def share_answer(message_id: str, user: CurrentUser, db: DbSession) -> ShareOut:
+    """Create (or reuse) a public read-only link to this answer."""
+    reply = db.get(Message, message_id)
+    if reply is None or reply.role != "assistant":
+        raise not_found("Answer")
+    _conversation(db, user, reply.conversation_id)  # ownership check
+    existing = db.scalar(select(ShareLink).where(ShareLink.message_id == message_id))
+    if existing is not None:
+        return ShareOut(token=existing.token)
+    link = ShareLink(
+        token=secrets.token_urlsafe(32),
+        workspace_id=user.workspace_id,
+        message_id=message_id,
+        created_by_id=user.id,
+    )
+    db.add(link)
+    db.commit()
+    return ShareOut(token=link.token)
+
+
+@router.get("/share/{token}", response_model=SharedAnswerOut)
+def view_shared_answer(token: str, db: DbSession) -> SharedAnswerOut:
+    """Public: view a shared answer without an account (read-only)."""
+    link = db.scalar(select(ShareLink).where(ShareLink.token == token))
+    if link is None:
+        raise not_found("Shared answer")
+    reply = db.get(Message, link.message_id)
+    if reply is None:
+        raise not_found("Shared answer")
+    conv = db.get(Conversation, reply.conversation_id)
+    question = (
+        next((m for m in conv.messages if m.position == reply.position - 1), None) if conv else None
+    )
+    ds = db.get(Dataset, reply.dataset_id or (conv.dataset_id if conv else ""))
+    return SharedAnswerOut(
+        question=question.content if question else "AskData answer",
+        content=reply.content,
+        answer=reply.answer,
+        dataset_name=ds.name if ds else "",
+        created_at=reply.created_at,
+    )

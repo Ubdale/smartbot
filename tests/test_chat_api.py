@@ -751,3 +751,30 @@ def test_save_and_list_and_delete_saved_answers(
 
     assert client.delete(f"/chat/saved/{body['id']}", headers=acct.headers).status_code == 204
     assert client.get("/chat/saved", headers=acct.headers).json() == []
+
+
+def test_share_answer_is_public_read_only(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    plan = {"metric": "sum", "metric_column": "revenue", "group_by": ["region"]}
+    use_llm(app, FakeLLM([plan], summary="North leads."))
+    reply = ask(client, acct, "revenue by region", dataset_id=dataset_id).json()["reply"]
+
+    created = client.post(f"/chat/messages/{reply['id']}/share", headers=acct.headers)
+    assert created.status_code == 200, created.text
+    token = created.json()["token"]
+    # Same answer shares to the same token.
+    assert (
+        client.post(f"/chat/messages/{reply['id']}/share", headers=acct.headers).json()["token"]
+        == token
+    )
+
+    # Public: no auth header needed.
+    shared = client.get(f"/chat/share/{token}")
+    assert shared.status_code == 200, shared.text
+    body = shared.json()
+    assert body["question"] == "revenue by region"
+    assert body["content"] == "North leads."
+    assert body["answer"]["table"]["columns"] == ["region", "Total revenue"]
+
+    assert client.get("/chat/share/not-a-real-token").status_code == 404

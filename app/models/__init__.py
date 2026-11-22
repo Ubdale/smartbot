@@ -6,6 +6,7 @@ from app.models.dataset import Dataset
 from app.models.digest import Digest, DigestRun
 from app.models.learning import GlossaryTerm, LearnedExample
 from app.models.saved import SavedAnswer
+from app.models.share import ShareLink
 from app.models.team import AuditEvent, Invite
 from app.models.user import User
 from app.models.workspace import Workspace
@@ -22,6 +23,7 @@ __all__ = [
     "LearnedExample",
     "Message",
     "SavedAnswer",
+    "ShareLink",
     "UsageEvent",
     "User",
     "Workspace",
