@@ -695,3 +695,33 @@ def test_make_a_chart_without_groups_explains(
     conv = first["conversation_id"]
     reply = ask(client, acct, "make a graph for this", conversation_id=conv).json()["reply"]
     assert "can't be charted" in reply["content"] or "groups" in reply["content"]
+
+
+def test_share_of_total_adds_a_percent_column(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    plan = {"metric": "sum", "metric_column": "revenue", "group_by": ["region"]}
+    use_llm(app, FakeLLM([plan], summary="North leads."))
+    conv = ask(client, acct, "revenue by region", dataset_id=dataset_id).json()["conversation_id"]
+    reply = ask(client, acct, "show as percentages", conversation_id=conv).json()["reply"]
+    table = reply["answer"]["table"]
+    assert table["columns"][-1] == "% of total"
+    shares = [r[-1] for r in table["rows"]]
+    assert abs(sum(shares) - 100.0) < 0.5  # shares add up to 100%
+    assert "%" in reply["content"]
+
+
+def test_share_of_total_needs_a_grouped_sum(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    use_llm(
+        app,
+        FakeLLM(
+            [{"metric": "avg", "metric_column": "revenue", "group_by": ["region"]}], summary="avg"
+        ),
+    )
+    conv = ask(client, acct, "average revenue by region", dataset_id=dataset_id).json()[
+        "conversation_id"
+    ]
+    reply = ask(client, acct, "as a percentage of total", conversation_id=conv).json()["reply"]
+    assert "only make sense" in reply["content"]

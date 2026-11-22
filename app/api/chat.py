@@ -24,7 +24,7 @@ from app.core.db import get_session_factory
 from app.digests import describe_schedule, is_schedule_request, parse_schedule
 from app.documents.answer import DocumentAnswer, answer_document_question
 from app.export_formats import FORMATS, NothingToExportError
-from app.exporting import export_title
+from app.exporting import _pretty, export_title
 from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
 from app.llm.embeddings import get_embedder
 from app.llm.factory import get_llm, get_summary_llm
@@ -255,6 +255,8 @@ def run_ask(
         return _schedule_reply(db, conv, body, previous, user, settings)
     if ds.kind == "table" and is_style_request(body.question, previous):
         return _style_reply(db, conv, body, previous, user, llm, today)
+    if ds.kind == "table" and PERCENT_REQUEST.search(body.question):
+        return _percent_reply(db, conv, body, previous, user)
     if ds.kind == "table" and CHART_REQUEST.search(body.question):
         return _chart_reply(db, conv, body, ds, previous, user, settings, today)
     fmt = requested_format(body.question)
@@ -709,6 +711,59 @@ def _last_table_answer(
         if q.role == "user" and a.role == "assistant" and "table" in answer:
             return q, a
     return None
+
+
+# "As percentages", "share of total", "% of total", "what percent of the total"
+PERCENT_REQUEST = re.compile(
+    r"(percentages?|percent|%|shares?|proportions?).{0,16}\b(of\s+)?(total|whole|all|each)\b"
+    r"|\b(as|in|to)\s+(a\s+)?(percentages?|percent|shares?)\b"
+    r"|\b(as|in)\s+%|\bshare\s+of\s+total\b",
+    re.I,
+)
+
+
+def _percent_reply(
+    db: Session, conv: Conversation, body: AskRequest,
+    previous: list[tuple[Message, Message]], user: User,
+) -> AskResponse:  # fmt: skip
+    """Add a '% of total' column to the last grouped answer (computed in code)."""
+    last = _last_table_answer(previous)
+    if last is None:
+        return _save_turn(
+            db, conv, body,
+            content=("Ask a grouped question first (for example “revenue by region”), "
+                     "then say “show as percentages”."),
+            status_="answered", plan=None, payload=None, calls=[], user=user,
+        )  # fmt: skip
+    _question, answer = last
+    table = (answer.answer or {}).get("table") or {}
+    columns, rows = table.get("columns", []), table.get("rows", [])
+    metric = (answer.plan or {}).get("metric")
+    values = [r[-1] for r in rows]
+    if (
+        len(columns) < 2
+        or not rows
+        or metric not in ("sum", "count", "count_distinct")
+        or not all(isinstance(v, int | float) and not isinstance(v, bool) for v in values)
+    ):
+        return _save_turn(
+            db, conv, body,
+            content=("Percentages of a total only make sense for a grouped count or sum "
+                     "(for example “revenue by region”). This answer isn't one."),
+            status_="answered", plan=None, payload=None, calls=[], user=user,
+        )  # fmt: skip
+    total = sum(float(v) for v in values)
+    out_cols = [*columns, "% of total"]
+    out_rows = [[*r, round(float(r[-1]) / total * 100, 1) if total else 0.0] for r in rows]
+    payload = _report_payload(
+        out_cols, out_rows, f"{_pretty(columns[-1])} as a share of the total ({total:,.0f})."
+    )
+    top = max(rows, key=lambda r: float(r[-1]))
+    content = (f"As a share of the total {_pretty(columns[-1]).lower()} "
+               f"({total:,.0f}): {top[0]} is the largest at "
+               f"{round(float(top[-1]) / total * 100, 1)}%.")  # fmt: skip
+    return _save_turn(db, conv, body, content=content, status_="answered", plan=None,
+                      payload=payload, calls=[], user=user)  # fmt: skip
 
 
 # "Make a graph for this", "show that as a bar chart", "plot it", "visualise this"
