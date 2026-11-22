@@ -672,7 +672,7 @@ def test_make_a_chart_redraws_the_last_answer(
     use_llm(app, FakeLLM([plan], summary="North leads."))
     first = ask(client, acct, "revenue by region", dataset_id=dataset_id).json()
     conv = first["conversation_id"]
-    assert first["reply"]["answer"]["chart"] is None  # no chart yet
+    # Grouped answers auto-chart now; asking still lets you force a type.
 
     resp = client.post(
         "/chat/ask",

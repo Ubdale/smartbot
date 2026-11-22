@@ -144,8 +144,8 @@ def choose_chart(vp: ValidatedPlan, result: QueryResult) -> ChartSpec | None:
     requested = vp.plan.chart
     if requested != "none" and fits(requested):
         return ChartSpec(requested, x, y, series)
-    if requested == "none" and not is_time:
-        return None
+    # Auto-chart: even when none was requested, draw one if the data suits it
+    # (a line for a time trend, otherwise a bar). Single values stay chart-free.
     for kind in ("line", "bar"):
         if fits(kind):
             return ChartSpec(kind, x, y, series)

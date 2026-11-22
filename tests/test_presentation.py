@@ -108,6 +108,9 @@ def test_chart_rules() -> None:
         vp(metric="avg", metric_column="revenue", group_by=["region"], chart="pie"), by_region
     )
     assert spec is not None and spec.type == "bar"
+    # Auto-chart: a grouped answer draws a bar even when no chart was requested.
+    auto = choose_chart(vp(metric="sum", metric_column="revenue", group_by=["region"]), by_region)
+    assert auto is not None and auto.type == "bar"
 
 
 def test_summary_prompt_gets_code_computed_extremes() -> None:
