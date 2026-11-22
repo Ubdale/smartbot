@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 
 from app import audit
 from app.api.deps import AdminUser, CurrentUser, DbSession, not_found
-from app.models import AuditEvent, Invite, User
+from app.models import AuditEvent, Conversation, Dataset, Invite, Message, User
 from app.schemas.auth import UserOut
 
 router = APIRouter(prefix="/workspaces/me", tags=["team"])
@@ -35,6 +35,16 @@ class InviteIn(BaseModel):
     @classmethod
     def _lower(cls, v: str) -> str:
         return v.lower()
+
+
+class ActivityOut(BaseModel):
+    questions_total: int
+    questions_this_week: int
+    datasets: int
+    conversations: int
+    active_members: int
+    top_datasets: list[dict[str, object]]  # [{name, questions}]
+    busiest_people: list[dict[str, object]]  # [{email, questions}]
 
 
 class InviteOut(BaseModel):
@@ -169,6 +179,65 @@ def audit_log(
         .limit(limit)
     )
     return list(db.scalars(stmt))
+
+
+@router.get("/activity", response_model=ActivityOut)
+def workspace_activity(actor: CurrentUser, db: DbSession) -> ActivityOut:
+    """Usage at a glance: questions asked, active people, busiest datasets."""
+    ws = actor.workspace_id
+    week_ago = datetime.now(UTC) - timedelta(days=7)
+    q_base = (
+        select(func.count())
+        .select_from(Message)
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(Conversation.workspace_id == ws, Message.role == "user")
+    )
+    total = int(db.scalar(q_base) or 0)
+    this_week = int(db.scalar(q_base.where(Message.created_at >= week_ago)) or 0)
+    datasets = int(
+        db.scalar(select(func.count()).select_from(Dataset).where(Dataset.workspace_id == ws)) or 0
+    )
+    conversations = int(
+        db.scalar(
+            select(func.count()).select_from(Conversation).where(Conversation.workspace_id == ws)
+        )
+        or 0
+    )
+    active = int(
+        db.scalar(
+            select(func.count(func.distinct(Conversation.user_id))).where(
+                Conversation.workspace_id == ws
+            )
+        )
+        or 0
+    )
+    top_ds = db.execute(
+        select(Dataset.name, func.count(Message.id))
+        .join(Conversation, Conversation.dataset_id == Dataset.id)
+        .join(Message, Message.conversation_id == Conversation.id)
+        .where(Dataset.workspace_id == ws, Message.role == "user")
+        .group_by(Dataset.id)
+        .order_by(func.count(Message.id).desc())
+        .limit(5)
+    ).all()
+    people = db.execute(
+        select(User.email, func.count(Message.id))
+        .join(Conversation, Conversation.user_id == User.id)
+        .join(Message, Message.conversation_id == Conversation.id)
+        .where(Conversation.workspace_id == ws, Message.role == "user")
+        .group_by(User.id)
+        .order_by(func.count(Message.id).desc())
+        .limit(5)
+    ).all()
+    return ActivityOut(
+        questions_total=total,
+        questions_this_week=this_week,
+        datasets=datasets,
+        conversations=conversations,
+        active_members=active,
+        top_datasets=[{"name": n, "questions": int(c)} for n, c in top_ds],
+        busiest_people=[{"email": e, "questions": int(c)} for e, c in people],
+    )
 
 
 __all__ = ["CurrentUser", "hash_token", "router"]

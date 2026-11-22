@@ -1,15 +1,19 @@
 """Teams: invite links, roles, removal, password changes, sessions, audit log."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import Invite
 from tests.conftest import Account, signup
+
+SAMPLE = Path(__file__).resolve().parent.parent / "sample_data"
 
 
 def bearer(token: str) -> dict[str, str]:
@@ -174,3 +178,34 @@ def test_invites_and_members_are_workspace_scoped(client: TestClient, owner: Acc
         ).status_code
         == 404
     )
+
+
+def test_workspace_activity(app: FastAPI, client: TestClient, owner: Account) -> None:
+    from app.api.deps import get_today
+    from app.llm.factory import get_llm
+    from tests.fakes import FakeLLM
+
+    app.dependency_overrides[get_today] = lambda: date(2026, 11, 19)
+    app.dependency_overrides[get_llm] = lambda: FakeLLM(
+        [{"metric": "count"}, {"metric": "count"}], summary="ok"
+    )
+    ds = client.post(
+        "/datasets", headers=owner.headers,
+        files={"file": ("sales.csv", (SAMPLE / "sales_orders.csv").read_bytes())},
+    ).json()["id"]
+    conv = client.post(
+        "/chat/ask", headers=owner.headers,
+        json={"question": "how many orders", "dataset_id": ds},
+    ).json()["conversation_id"]
+    client.post(
+        "/chat/ask", headers=owner.headers,
+        json={"question": "again", "conversation_id": conv},
+    )
+    act = client.get("/workspaces/me/activity", headers=owner.headers).json()
+    assert act["questions_total"] == 2
+    assert act["questions_this_week"] == 2
+    assert act["datasets"] == 1
+    assert act["conversations"] == 1
+    assert act["active_members"] == 1
+    assert act["top_datasets"][0]["name"] == "sales" and act["top_datasets"][0]["questions"] == 2
+    assert act["busiest_people"][0]["email"] == "owner@acme.com"
