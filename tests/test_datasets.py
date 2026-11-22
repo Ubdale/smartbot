@@ -360,3 +360,37 @@ def test_asking_about_sheets_lists_them(app: Any, client: TestClient, acct: Acco
     assert "2 sheets" in reply["content"]
     sheet_names = {r[0] for r in reply["answer"]["table"]["rows"]}
     assert sheet_names == {"Tasks", "People"}
+
+
+def test_combine_two_sheets_on_a_shared_key(app: Any, client: TestClient, acct: Account) -> None:
+    from app.api.deps import get_today
+    from app.llm.factory import get_llm
+    from tests.fakes import FakeLLM
+
+    app.dependency_overrides[get_today] = lambda: date(2026, 11, 19)
+    app.dependency_overrides[get_llm] = lambda: FakeLLM([])  # the intent needs no model
+    tasks = pd.DataFrame({"Issue key": ["T-1", "T-2", "T-3"], "Title": ["a", "b", "c"]})
+    people = pd.DataFrame(
+        {"Issue key": ["T-1", "T-2"], "Assignee": ["Sara", "Ali"], "Hours": [4, 6]}
+    )
+    content = xlsx_bytes({"Tasks": tasks, "People": people})
+    upload(client, acct, "Project.xlsx", content)  # creates Project + "Project - People"
+
+    datasets = client.get("/datasets", headers=acct.headers).json()
+    main = next(d for d in datasets if d["name"] == "Project")
+
+    resp = client.post(
+        "/chat/ask",
+        headers=acct.headers,
+        json={"question": "combine with People on Issue key", "dataset_id": main["id"]},
+    )
+    assert resp.status_code == 200, resp.text
+    reply = resp.json()["reply"]
+    table = reply["answer"]["table"]
+    assert "Assignee" in table["columns"] and "Title" in table["columns"]
+    by_key = {r[table["columns"].index("Issue key")]: r for r in table["rows"]}
+    t1 = by_key["T-1"]
+    assert t1[table["columns"].index("Assignee")] == "Sara"
+    # T-3 has no match on the People sheet -> blank assignee.
+    assert by_key["T-3"][table["columns"].index("Assignee")] in (None, "")
+    assert "2 of 3 rows matched" in reply["content"]

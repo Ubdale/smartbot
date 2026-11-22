@@ -41,6 +41,7 @@ from app.models import (
 )
 from app.query.answer import Answer, answer_question
 from app.query.codegen import pandas_code
+from app.query.combine import CombineError, choose_key, combine, describe_combined
 from app.query.compare import compare_versions, describe_comparison
 from app.query.doctor import summarize
 from app.query.evidence import find_evidence
@@ -265,6 +266,8 @@ def run_ask(
         return _schedule_reply(db, conv, body, previous, user, settings)
     if ds.kind == "table" and is_style_request(body.question, previous):
         return _style_reply(db, conv, body, previous, user, llm, today)
+    if ds.kind == "table" and COMBINE_REQUEST.search(body.question):
+        return _combine_reply(db, conv, body, ds, user, settings)
     if ds.kind == "table" and PERCENT_REQUEST.search(body.question):
         return _percent_reply(db, conv, body, previous, user)
     if ds.kind == "table" and CHART_REQUEST.search(body.question):
@@ -721,6 +724,87 @@ def _last_table_answer(
         if q.role == "user" and a.role == "assistant" and "table" in answer:
             return q, a
     return None
+
+
+# "Combine/join/merge both sheets", "join with People on Issue key"
+COMBINE_REQUEST = re.compile(
+    r"\b(combine|join|merge|link|match|cross[- ]?reference)\b"
+    r".{0,40}\b(sheets?|tables?|datasets?|data|files?|with|and|both)\b",
+    re.I,
+)
+_ON_KEY = re.compile(r"\b(on|by|using|matching|via|through)\s+([\w .\-]{2,40})", re.I)
+
+
+def _candidate_datasets(db: Session, user: User, ds: Dataset) -> list[Dataset]:
+    stmt = workspace_scoped(
+        select(Dataset).where(Dataset.kind == "table", Dataset.id != ds.id),
+        Dataset, user,
+    ).order_by(Dataset.created_at.desc())  # fmt: skip
+    return list(db.scalars(stmt))
+
+
+def _pick_other(question: str, ds: Dataset, candidates: list[Dataset]) -> Dataset | None:
+    """The dataset to combine with: one named in the question, else the workbook sibling."""
+    from rapidfuzz import fuzz
+
+    siblings = [c for c in candidates if c.original_filename == ds.original_filename
+                and c.file_format == ds.file_format]  # fmt: skip
+    # Words after "with"/"and"/"to" are the likely name of the other sheet/table.
+    m = re.search(r"\b(with|and|to|into|against)\s+(.+)$", question, re.I)
+    hint = (m.group(2) if m else "").strip(" ?.")
+    if hint:
+        scored = sorted(candidates, key=lambda c: fuzz.partial_ratio(c.name.lower(), hint.lower()),
+                        reverse=True)  # fmt: skip
+        if scored and fuzz.partial_ratio(scored[0].name.lower(), hint.lower()) >= 70:
+            return scored[0]
+    if len(siblings) == 1:
+        return siblings[0]
+    return None
+
+
+def _combine_reply(
+    db: Session, conv: Conversation, body: AskRequest, ds: Dataset, user: User, settings: Settings
+) -> AskResponse:
+    """Join this dataset with another (e.g. the other sheet) on a shared key."""
+    candidates = _candidate_datasets(db, user, ds)
+    if not candidates:
+        return _save_turn(
+            db, conv, body,
+            content=("There's no other dataset to combine with yet. Upload the second sheet or "
+                     "file, then ask to combine them."),
+            status_="answered", plan=None, payload=None, calls=[], user=user,
+        )  # fmt: skip
+    other = _pick_other(body.question, ds, candidates)
+    if other is None:
+        names = ", ".join(f"“{c.name}”" for c in candidates[:8])
+        return _save_turn(
+            db, conv, body,
+            content=(f"Which one should I combine “{ds.name}” with? Say for example "
+                     f"“combine with {candidates[0].name} on <column>”. "
+                     f"Available: {names}."),
+            status_="answered", plan=None, payload=None, calls=[], user=user,
+        )  # fmt: skip
+    key_match = _ON_KEY.search(body.question)
+    wanted_key = key_match.group(2).strip() if key_match else None
+    try:
+        key = choose_key(ds.columns, other.columns, wanted_key)
+        result = combine(
+            require_parquet(settings, ds),
+            require_parquet(settings, other),
+            left_name=ds.name,
+            right_name=other.name,
+            left_profile=ds.columns,
+            right_profile=other.columns,
+            key=key,
+        )
+    except CombineError as exc:
+        return _save_turn(db, conv, body, content=str(exc), status_="answered", plan=None,
+                          payload=None, calls=[], user=user)  # fmt: skip
+    payload = _report_payload(
+        result.columns, result.rows, describe_combined(result), truncated=result.truncated
+    )
+    return _save_turn(db, conv, body, content=describe_combined(result), status_="answered",
+                      plan=None, payload=payload, calls=[], user=user)  # fmt: skip
 
 
 # "As percentages", "share of total", "% of total", "what percent of the total"
