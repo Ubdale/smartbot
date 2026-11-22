@@ -775,6 +775,6 @@ def test_share_answer_is_public_read_only(
     body = shared.json()
     assert body["question"] == "revenue by region"
     assert body["content"] == "North leads."
-    assert body["answer"]["table"]["columns"] == ["region", "Total revenue"]
+    assert body["answer"]["table"]["columns"] == ["region", "sum_revenue"]
 
     assert client.get("/chat/share/not-a-real-token").status_code == 404
