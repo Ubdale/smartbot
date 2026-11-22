@@ -12,6 +12,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -28,7 +29,7 @@ from app.exporting import _pretty, export_title
 from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
 from app.llm.embeddings import get_embedder
 from app.llm.factory import get_llm, get_summary_llm
-from app.models import Conversation, Dataset, Message, UsageEvent, User
+from app.models import Conversation, Dataset, Message, SavedAnswer, UsageEvent, User
 from app.query.answer import Answer, answer_question
 from app.query.codegen import pandas_code
 from app.query.compare import compare_versions, describe_comparison
@@ -1155,3 +1156,72 @@ def answer_evidence(
     except PlanError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return EvidenceOut(columns=ev.columns, rows=ev.rows, total=ev.total)
+
+
+class SaveIn(BaseModel):
+    message_id: str
+
+
+class SavedOut(BaseModel):
+    id: str
+    question: str
+    dataset_id: str
+    dataset_name: str
+    created_at: datetime
+
+
+def _saved_out(db: DbSession, s: SavedAnswer) -> SavedOut:
+    ds = db.get(Dataset, s.dataset_id)
+    return SavedOut(id=s.id, question=s.question, dataset_id=s.dataset_id,
+                    dataset_name=ds.name if ds else "", created_at=s.created_at)  # fmt: skip
+
+
+@router.post("/saved", response_model=SavedOut, status_code=status.HTTP_201_CREATED)
+def save_answer(body: SaveIn, user: CurrentUser, db: DbSession) -> SavedOut:
+    """Star an answer so you can re-ask it later on the latest data."""
+    reply = db.get(Message, body.message_id)
+    if reply is None or reply.role != "assistant":
+        raise not_found("Answer")
+    conv = _conversation(db, user, reply.conversation_id)  # checks ownership
+    question = next((m for m in conv.messages if m.position == reply.position - 1), None)
+    if question is None:
+        raise not_found("Answer")
+    dataset_id = reply.dataset_id or conv.dataset_id
+    existing = db.scalar(
+        select(SavedAnswer).where(
+            SavedAnswer.user_id == user.id,
+            SavedAnswer.dataset_id == dataset_id,
+            SavedAnswer.question == question.content,
+        )
+    )
+    if existing is not None:
+        return _saved_out(db, existing)
+    saved = SavedAnswer(
+        workspace_id=user.workspace_id,
+        user_id=user.id,
+        dataset_id=dataset_id,
+        question=question.content[:500],
+        plan=reply.plan,
+    )
+    db.add(saved)
+    db.commit()
+    return _saved_out(db, saved)
+
+
+@router.get("/saved", response_model=list[SavedOut])
+def list_saved(user: CurrentUser, db: DbSession) -> list[SavedOut]:
+    stmt = (
+        select(SavedAnswer)
+        .where(SavedAnswer.user_id == user.id, SavedAnswer.workspace_id == user.workspace_id)
+        .order_by(SavedAnswer.created_at.desc())
+    )
+    return [_saved_out(db, s) for s in db.scalars(stmt)]
+
+
+@router.delete("/saved/{saved_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_saved(saved_id: str, user: CurrentUser, db: DbSession) -> None:
+    saved = db.get(SavedAnswer, saved_id)
+    if saved is None or saved.user_id != user.id or saved.workspace_id != user.workspace_id:
+        raise not_found("Saved answer")
+    db.delete(saved)
+    db.commit()

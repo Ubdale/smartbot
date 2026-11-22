@@ -190,15 +190,18 @@ def test_workspace_activity(app: FastAPI, client: TestClient, owner: Account) ->
         [{"metric": "count"}, {"metric": "count"}], summary="ok"
     )
     ds = client.post(
-        "/datasets", headers=owner.headers,
+        "/datasets",
+        headers=owner.headers,
         files={"file": ("sales.csv", (SAMPLE / "sales_orders.csv").read_bytes())},
     ).json()["id"]
     conv = client.post(
-        "/chat/ask", headers=owner.headers,
+        "/chat/ask",
+        headers=owner.headers,
         json={"question": "how many orders", "dataset_id": ds},
     ).json()["conversation_id"]
     client.post(
-        "/chat/ask", headers=owner.headers,
+        "/chat/ask",
+        headers=owner.headers,
         json={"question": "again", "conversation_id": conv},
     )
     act = client.get("/workspaces/me/activity", headers=owner.headers).json()

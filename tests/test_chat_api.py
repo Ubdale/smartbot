@@ -725,3 +725,29 @@ def test_share_of_total_needs_a_grouped_sum(
     ]
     reply = ask(client, acct, "as a percentage of total", conversation_id=conv).json()["reply"]
     assert "only make sense" in reply["content"]
+
+
+def test_save_and_list_and_delete_saved_answers(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    use_llm(app, FakeLLM([{"metric": "count"}], summary="ok"))
+    reply = ask(client, acct, "how many orders", dataset_id=dataset_id).json()["reply"]
+
+    saved = client.post("/chat/saved", headers=acct.headers, json={"message_id": reply["id"]})
+    assert saved.status_code == 201, saved.text
+    body = saved.json()
+    assert body["question"] == "how many orders" and body["dataset_id"] == dataset_id
+
+    # Saving the same answer again is idempotent.
+    again = client.post("/chat/saved", headers=acct.headers, json={"message_id": reply["id"]})
+    assert again.json()["id"] == body["id"]
+
+    listed = client.get("/chat/saved", headers=acct.headers).json()
+    assert [s["id"] for s in listed] == [body["id"]]
+
+    other = signup(client, "spy@other.com", workspace="Other")
+    assert client.get("/chat/saved", headers=other.headers).json() == []
+    assert client.delete(f"/chat/saved/{body['id']}", headers=other.headers).status_code == 404
+
+    assert client.delete(f"/chat/saved/{body['id']}", headers=acct.headers).status_code == 204
+    assert client.get("/chat/saved", headers=acct.headers).json() == []

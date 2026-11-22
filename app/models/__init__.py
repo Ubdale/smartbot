@@ -5,6 +5,7 @@ from app.models.chat import Conversation, Message, UsageEvent
 from app.models.dataset import Dataset
 from app.models.digest import Digest, DigestRun
 from app.models.learning import GlossaryTerm, LearnedExample
+from app.models.saved import SavedAnswer
 from app.models.team import AuditEvent, Invite
 from app.models.user import User
 from app.models.workspace import Workspace
@@ -20,6 +21,7 @@ __all__ = [
     "Invite",
     "LearnedExample",
     "Message",
+    "SavedAnswer",
     "UsageEvent",
     "User",
     "Workspace",
