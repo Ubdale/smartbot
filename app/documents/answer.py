@@ -109,20 +109,21 @@ def answer_document_question(
         return DocumentAnswer("failed", NO_TEXT, [], [], grounded=True)
     previous_q, previous_a = history[-1] if history else ("", "")
     vague = len(tokenize(question)) < 2 or bool(MORE.search(question))
-    if sum(len(p.text) for p in passages) <= WHOLE_DOC_CHARS:
-        found = passages  # a short document: always read all of it
-    elif OVERVIEW.search(question) or (vague and OVERVIEW.search(previous_q)):
-        # "What is it about?", or "explain more" after that: from across the document.
-        found = spread(passages, OVERVIEW_PASSAGES * (2 if vague and history else 1))
+    # An overview question ("what is this about?", "summarise", or "explain more" after
+    # one) looks across the whole document; a specific question gets only the passages
+    # that actually answer it, never the entire document.
+    is_overview = bool(OVERVIEW.search(question)) or (vague and bool(OVERVIEW.search(previous_q)))
+    if is_overview:
+        tiny = sum(len(p.text) for p in passages) <= WHOLE_DOC_CHARS
+        found = passages if tiny else spread(passages, OVERVIEW_PASSAGES * (2 if vague else 1))
     else:
-        # Follow-ups ("explain more", "what about 2024?") search with the previous
-        # question and answer too, so they find the same topic again.
+        # Follow-ups ("what about 2024?") search with the previous question/answer too.
         query = " ".join([previous_q, previous_a if vague else "", question])
         found = find_passages(query, passages, TOP_K * (2 if vague else 1), embedder, parquet)
         if not found:
-            # No shared keywords (different wording): let the model read across the
-            # document rather than giving up. It still says so if the answer isn't there.
-            found = spread(passages, OVERVIEW_PASSAGES)
+            # No keyword overlap (different wording): a few passages from across the
+            # document, not all of it. The model still says so if the answer isn't there.
+            found = spread(passages, min(TOP_K, len(passages)))
 
     stage("reading")
     numbered = [(i, p.page, p.text) for i, p in enumerate(found, start=1)]

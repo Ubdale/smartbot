@@ -284,3 +284,22 @@ def test_explain_more_follow_up_expands_the_previous_answer(
     # The model saw the earlier turn, so "more" means more about the same thing.
     sent = " ".join(m.content for m in llm.calls[-1][0])
     assert "What is this document about?" in sent
+
+
+def test_specific_question_retrieves_only_a_slice_not_the_whole_document(
+    app: FastAPI, client: TestClient, acct: Account
+) -> None:
+    # A big multi-topic document (many chunks).
+    sections = [
+        f"Topic {i}. " + f"This paragraph is about subject number {i}. " * 30 for i in range(20)
+    ]
+    sections.insert(0, "Leave policy. " + "Employees get 24 days of annual leave a year. " * 30)
+    doc = upload(client, acct, "handbook.docx", docx_bytes(sections)).json()["id"]
+    app.dependency_overrides[get_llm] = lambda: reply_for(
+        {"found": True, "answer": "24 days a year [1].", "sources": [1]}
+    )
+    reply = ask(client, acct, "how many annual leave days do we get?", dataset_id=doc)["reply"]
+    sources = reply["answer"]["sources"]
+    # Only a handful of passages are read, not the whole (20+ chunk) document.
+    assert 1 <= len(sources) <= 10
+    assert any("annual leave" in s["text"].lower() for s in sources)
