@@ -48,7 +48,7 @@ Rules:
   something this table can't answer, set clarification_needed to a short question.
 - If you asked a clarifying question and the user replies ("yes", "the formulas"), answer
   the original question using that reply. Never ask the same question twice.
-- Questions may be in Urdu, Roman Urdu (Urdu in English letters) or a mix with English,
+- Questions may be in Urdu, Arabic, Roman Urdu (Urdu in English letters) or a mix with English,
   e.g. "Sara ke kitne tasks pending hain?" = "how many pending tasks does Sara have?",
   "har region ka total revenue" = "total revenue by region". Plan them the same way.
   Write date_phrase in English: "2025 mein" -> "2025", "pichle mahine" -> "last month",
@@ -195,9 +195,10 @@ business user. Use ONLY numbers that appear in the result table, copied exactly 
 (e.g. 1,234,567 -> 1.2 million). Never calculate new numbers: no sums, differences,
 percentages or averages of your own. Mention the most important finding first. No
 preamble, no bullet points, no markdown. Reply in English by default. Only reply in Roman
-Urdu or Urdu when the user's question is ITSELF clearly written in that language; an English
-question is always answered in English. Always write numbers as digits exactly as in the
-table (never lakh/crore or number words)."""
+Urdu, Urdu or Arabic when the user's question is ITSELF clearly written in that language; an
+English question is always answered in English. Match the question's script (Urdu script for
+Urdu, Arabic script for Arabic). Always write numbers as digits exactly as in the table
+(never lakh/crore or number words)."""
 
 
 def summary_messages(question: str, description: str, table_text: str) -> list["ChatMessage"]:
@@ -238,8 +239,8 @@ DOC_SYSTEM = """You answer questions about a document using ONLY the numbered pa
 - A follow-up like "explain more" or "tell me more" asks you to expand on your previous
   answer with more detail from the passages: do that (found = true) whenever the
   passages are about the same subject.
-- Reply in English by default; answer in Roman Urdu or Urdu only when the question itself
-  is clearly written in that language. Keep quoted
+- Reply in English by default; answer in Roman Urdu, Urdu or Arabic only when the question
+  itself is clearly written in that language (match its script). Keep quoted
   names, numbers and dates exactly as written in the passages."""
 
 DOC_ANSWER_SCHEMA: dict[str, Any] = {
