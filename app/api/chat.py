@@ -989,22 +989,29 @@ def _code_reply(
     previous: list[tuple[Message, Message]],
     user: User,
 ) -> AskResponse:
-    """Code that reproduces the latest computed answer, generated from its plan."""
+    """Code (pandas and/or SQL) that reproduces the latest computed answer."""
+    wants_sql = bool(re.search(r"\bsql\b", body.question, re.I))
+    # A real computed query, not a file overview ("what is this about?").
     last = next(
         (
             (q, a)
             for q, a in reversed(previous)
-            if q.role == "user" and a.role == "assistant" and a.plan and a.answer
+            if q.role == "user"
+            and a.role == "assistant"
+            and a.answer
+            and (a.plan or {}).get("metric") not in (None, "describe")
         ),
         None,
     )
     if last is None:
+        thing = "SQL" if wants_sql else "Python code"
         return _save_turn(
             db, conv, body,
             content=(
-                "Ask me a question about the data first (for example “top 10 customers "
-                "by revenue”), then ask for Python code and I'll give you code that "
-                "reproduces that answer."
+                f"Ask me a data question first (for example “top 10 customers by revenue” or "
+                f"“tasks by status”), then ask for {thing} and I'll give you {thing} that "
+                "reproduces that answer. (“What is this file about?” isn't computed from a "
+                "query, so it has no code.)"
             ),
             status_="answered", plan=None, payload=None, calls=[], user=user,
         )  # fmt: skip
@@ -1016,21 +1023,38 @@ def _code_reply(
         file_format=ds.file_format,
         date_range=explanation.get("date_range"),
     )
-    blocks = [{"language": "python", "code": python}]
+    python_block = {"language": "python", "code": python}
+    sql_block = None
     if explanation.get("sql", "").startswith("SELECT"):
         params = ", ".join(repr(p) for p in explanation.get("params", []))
-        blocks.append(
-            {
-                "language": "sql",
-                "code": f"-- DuckDB; parameters in order: {params}\n"
-                + explanation["sql"].replace("read_parquet(?)", repr(ds.original_filename)),
-            }
-        )
+        sql_block = {
+            "language": "sql",
+            "code": f"-- DuckDB; parameters in order: {params}\n"
+            + explanation["sql"].replace("read_parquet(?)", repr(ds.original_filename)),
+        }
+
+    if wants_sql and sql_block is None:
+        return _save_turn(
+            db, conv, body,
+            content=(
+                f"That answer (“{question.content}”) isn't produced by a SQL query, so there's "
+                "no SQL to show. Ask a computed question (for example “revenue by region”), "
+                "then ask for the SQL."
+            ),
+            status_="answered", plan=None, payload=None, calls=[], user=user,
+        )  # fmt: skip
+    # Lead with whatever was asked for (SQL or pandas).
+    blocks = (
+        [sql_block, python_block]
+        if wants_sql and sql_block
+        else [python_block, *([sql_block] if sql_block else [])]
+    )
+    lang = "SQL (DuckDB)" if wants_sql and sql_block else "Python (pandas) code"
     return _save_turn(
         db, conv, body,
         content=(
-            f"Here's Python (pandas) code that reproduces “{question.content}”. "
-            f"Put {ds.original_filename} next to it, or change the file path."
+            f"Here's {lang} that reproduces “{question.content}”. It runs on "
+            f"{ds.original_filename}."
         ),
         status_="answered", plan=None, payload={"type": "code", "blocks": blocks},
         calls=[], user=user,

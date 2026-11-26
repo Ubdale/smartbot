@@ -451,7 +451,7 @@ def test_code_before_any_question_explains(
 ) -> None:
     use_llm(app, FakeLLM([]))
     reply = ask(client, acct, "write python code", dataset_id=dataset_id).json()["reply"]
-    assert "Ask me a question about the data first" in reply["content"]
+    assert "Ask me a data question first" in reply["content"]
 
 
 def test_download_before_any_answer_explains(
@@ -778,3 +778,32 @@ def test_share_answer_is_public_read_only(
     assert body["answer"]["table"]["columns"] == ["region", "sum_revenue"]
 
     assert client.get("/chat/share/not-a-real-token").status_code == 404
+
+
+def test_make_sql_leads_with_sql_and_skips_describe(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    llm = use_llm(app, FakeLLM([REVENUE_BY_REGION, {"metric": "describe"}], summary="Done."))
+    conv = ask(client, acct, "Revenue by region", dataset_id=dataset_id).json()["conversation_id"]
+    # A describe answer in between must NOT become the thing we make SQL for.
+    ask(client, acct, "what is this file about?", conversation_id=conv)
+    calls = len(llm.calls)
+    reply = ask(client, acct, "make sql query for it", conversation_id=conv).json()["reply"]
+    assert len(llm.calls) == calls  # no model call
+    blocks = reply["answer"]["blocks"]
+    assert blocks[0]["language"] == "sql"  # SQL requested -> SQL first
+    assert "SELECT" in blocks[0]["code"]
+    assert "SQL (DuckDB)" in reply["content"]
+    assert "Revenue by region" in reply["content"]  # not the describe
+
+
+def test_sql_without_a_computed_query_explains(
+    app: FastAPI, client: TestClient, acct: Account, dataset_id: str
+) -> None:
+    use_llm(app, FakeLLM([{"metric": "describe"}], summary=""))
+    conv = ask(client, acct, "what is this file about?", dataset_id=dataset_id).json()[
+        "conversation_id"
+    ]
+    reply = ask(client, acct, "make sql query for it", conversation_id=conv).json()["reply"]
+    assert reply["answer"] is None
+    assert "SQL" in reply["content"]
