@@ -23,6 +23,7 @@ from app.core.config import Settings
 from app.exporting import build_answer_workbook
 from app.llm.base import LLMProvider
 from app.models import Dataset, Digest, DigestRun, User
+from app.notify import digest_slack_text, post_slack
 from app.query.compare import compare_versions, comparison_counts
 from app.query.executor import columns_from_profile, execute_plan, validate_plan
 from app.query.presentation import describe_plan, fallback_summary
@@ -181,6 +182,11 @@ def run_digest(
     db.flush()
     owner = db.get(User, digest.user_id)
     run.emailed, run.email_note = send_digest_email(settings, digest, run, ds, owner)
+    webhook = digest.slack_webhook or (
+        settings.slack_webhook_url.get_secret_value() if settings.slack_webhook_url else None
+    )
+    if webhook:
+        post_slack(webhook, digest_slack_text(digest.title, ds.name, content))
     digest.last_run_at = now
     digest.next_run_at = next_run(digest.cadence, digest.weekday, digest.hour, digest.minute,
                                   digest.timezone, now)  # fmt: skip

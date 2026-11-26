@@ -28,6 +28,7 @@ class DigestIn(BaseModel):
     minute: int = Field(default=0, ge=0, le=59)
     timezone: str | None = Field(default=None, max_length=64)
     recipients: list[EmailStr] | None = Field(default=None, max_length=20)
+    slack_webhook: str | None = Field(default=None, max_length=300)
 
 
 class DigestPatch(BaseModel):
@@ -38,6 +39,7 @@ class DigestPatch(BaseModel):
     minute: int | None = Field(default=None, ge=0, le=59)
     timezone: str | None = Field(default=None, max_length=64)
     recipients: list[EmailStr] | None = Field(default=None, max_length=20)
+    slack_webhook: str | None = Field(default=None, max_length=300)
     active: bool | None = None
     remove_questions: list[str] | None = None
 
@@ -55,6 +57,7 @@ class DigestOut(BaseModel):
     timezone: str
     schedule: str  # "every Monday at 09:00 (Asia/Karachi)"
     recipients: list[str]
+    slack: bool  # a Slack webhook is configured
     active: bool
     next_run_at: datetime
     last_run_at: datetime | None
@@ -78,7 +81,8 @@ def _out(db: DbSession, d: Digest) -> DigestOut:
         id=d.id, title=d.title, dataset_id=d.dataset_id, dataset_name=ds.name if ds else "",
         questions=[i["question"] for i in d.items], cadence=d.cadence, weekday=d.weekday,
         hour=d.hour, minute=d.minute, timezone=d.timezone, schedule=describe_schedule(d),
-        recipients=list(d.recipients), active=d.active, next_run_at=d.next_run_at,
+        recipients=list(d.recipients), slack=bool(d.slack_webhook), active=d.active,
+        next_run_at=d.next_run_at,
         last_run_at=d.last_run_at,
     )  # fmt: skip
 
@@ -140,7 +144,7 @@ def create_digest(db: DbSession, user: User, body: DigestIn, default_tz: str) ->
         title=(body.title or question.content)[:200], items=[item], cadence=body.cadence,
         weekday=body.weekday, hour=body.hour, minute=body.minute, timezone=tz,
         recipients=[str(r) for r in body.recipients] if body.recipients else [user.email],
-        active=True,
+        slack_webhook=body.slack_webhook or None, active=True,
         next_run_at=next_run(body.cadence, body.weekday, body.hour, body.minute, tz,
                              datetime.now(UTC)),
     )  # fmt: skip
@@ -170,7 +174,16 @@ def add_digest(body: DigestIn, user: CurrentUser, db: DbSession,
 def update_digest(digest_id: str, body: DigestPatch, user: CurrentUser,
                   db: DbSession) -> DigestOut:  # fmt: skip
     d = _own(db, user, digest_id)
-    for name in ("title", "cadence", "weekday", "hour", "minute", "timezone", "active"):
+    for name in (
+        "title",
+        "cadence",
+        "weekday",
+        "hour",
+        "minute",
+        "timezone",
+        "active",
+        "slack_webhook",
+    ):
         value = getattr(body, name)
         if value is not None:
             setattr(d, name, value)

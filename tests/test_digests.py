@@ -262,3 +262,58 @@ def test_patch_reschedule_and_multiple_recipients(app, client, settings) -> None
     again = client.get("/digests", headers=acct.headers).json()[0]
     assert again["weekday"] == 2 and again["minute"] == 30
     assert len(again["recipients"]) == 3
+
+
+def test_slack_delivery_on_digest_run(app, client, settings, session_factory) -> None:  # type: ignore[no-untyped-def]
+    import httpx
+
+    from app.digests import run_digest
+    from app.models import Digest
+
+    posts: list[dict] = []  # type: ignore[type-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "hooks.slack.com"
+        posts.append(json.loads(request.content))
+        return httpx.Response(200, text="ok")
+
+    import app.digests as digests_mod
+
+    orig = digests_mod.post_slack
+
+    def patched(url: str, text: str, **_: object) -> tuple[bool, str | None]:
+        return orig(url, text, client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    digests_mod.post_slack = patched  # type: ignore[assignment]
+    try:
+        acct = signup(client, "owner@acme.com", workspace="Acme")
+        ds = client.post(
+            "/datasets",
+            headers=acct.headers,
+            files={"file": ("sales.csv", (SAMPLE / "sales_orders.csv").read_bytes())},
+        ).json()["id"]
+        app.dependency_overrides[get_llm] = lambda: FakeLLM([REVENUE], summary="Total.")
+        reply = client.post(
+            "/chat/ask",
+            headers=acct.headers,
+            json={"question": "Total revenue", "dataset_id": ds},
+        ).json()["reply"]
+        hook = "https://hooks.slack.com/services/T000/B000/xxx"
+        d = client.post(
+            "/digests",
+            headers=acct.headers,
+            json={"message_id": reply["id"], "slack_webhook": hook},
+        ).json()
+        assert d["slack"] is True
+        with session_factory() as db:
+            run_digest(
+                db,
+                settings,
+                db.get(Digest, d["id"]),
+                llm=None,
+                today=__import__("datetime").date(2026, 11, 19),
+            )
+            db.commit()
+        assert len(posts) == 1 and "Total revenue" in posts[0]["text"]
+    finally:
+        digests_mod.post_slack = orig  # type: ignore[assignment]

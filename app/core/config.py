@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     # Shared secret the hourly timer (GitHub Actions) sends to run due digests.
     digest_cron_secret: SecretStr | None = None
     default_timezone: str = "Asia/Karachi"
+    # Default Slack incoming-webhook for digests/alerts (a per-digest one overrides it).
+    slack_webhook_url: SecretStr | None = None
 
     # Questions per user per minute (0 = no limit). Protects free LLM quotas.
     questions_per_minute: int = Field(default=10, ge=0)

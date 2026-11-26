@@ -31,6 +31,8 @@ class Digest(IdMixin, TimestampMixin, Base):
     minute: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # 0-59
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Karachi")
     recipients: Mapped[list[str]] = mapped_column(JSON)
+    # Optional Slack incoming-webhook URL to also post this digest to a channel.
+    slack_webhook: Mapped[str | None] = mapped_column(String(300), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
