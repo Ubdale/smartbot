@@ -29,6 +29,8 @@ class DigestIn(BaseModel):
     timezone: str | None = Field(default=None, max_length=64)
     recipients: list[EmailStr] | None = Field(default=None, max_length=20)
     slack_webhook: str | None = Field(default=None, max_length=300)
+    condition_op: Literal[">", ">=", "<", "<="] | None = None
+    condition_value: float | None = None
 
 
 class DigestPatch(BaseModel):
@@ -40,6 +42,8 @@ class DigestPatch(BaseModel):
     timezone: str | None = Field(default=None, max_length=64)
     recipients: list[EmailStr] | None = Field(default=None, max_length=20)
     slack_webhook: str | None = Field(default=None, max_length=300)
+    condition_op: Literal[">", ">=", "<", "<="] | None = None
+    condition_value: float | None = None
     active: bool | None = None
     remove_questions: list[str] | None = None
 
@@ -58,6 +62,8 @@ class DigestOut(BaseModel):
     schedule: str  # "every Monday at 09:00 (Asia/Karachi)"
     recipients: list[str]
     slack: bool  # a Slack webhook is configured
+    condition_op: str | None  # set = this is an alert
+    condition_value: float | None
     active: bool
     next_run_at: datetime
     last_run_at: datetime | None
@@ -81,7 +87,8 @@ def _out(db: DbSession, d: Digest) -> DigestOut:
         id=d.id, title=d.title, dataset_id=d.dataset_id, dataset_name=ds.name if ds else "",
         questions=[i["question"] for i in d.items], cadence=d.cadence, weekday=d.weekday,
         hour=d.hour, minute=d.minute, timezone=d.timezone, schedule=describe_schedule(d),
-        recipients=list(d.recipients), slack=bool(d.slack_webhook), active=d.active,
+        recipients=list(d.recipients), slack=bool(d.slack_webhook),
+        condition_op=d.condition_op, condition_value=d.condition_value, active=d.active,
         next_run_at=d.next_run_at,
         last_run_at=d.last_run_at,
     )  # fmt: skip
@@ -144,7 +151,8 @@ def create_digest(db: DbSession, user: User, body: DigestIn, default_tz: str) ->
         title=(body.title or question.content)[:200], items=[item], cadence=body.cadence,
         weekday=body.weekday, hour=body.hour, minute=body.minute, timezone=tz,
         recipients=[str(r) for r in body.recipients] if body.recipients else [user.email],
-        slack_webhook=body.slack_webhook or None, active=True,
+        slack_webhook=body.slack_webhook or None,
+        condition_op=body.condition_op, condition_value=body.condition_value, active=True,
         next_run_at=next_run(body.cadence, body.weekday, body.hour, body.minute, tz,
                              datetime.now(UTC)),
     )  # fmt: skip
@@ -211,15 +219,17 @@ def delete_digest(digest_id: str, user: CurrentUser, db: DbSession) -> None:
 @router.post("/digests/{digest_id}/run", response_model=RunOut)
 def run_now(digest_id: str, user: CurrentUser, db: DbSession, settings: AppSettings,
             today: Today, llm: Annotated[LLMProvider, Depends(get_llm)]) -> RunOut:  # fmt: skip
-    """Send the digest now (it keeps its schedule)."""
+    """Send the digest (or alert) now, regardless of its condition — keeps its schedule."""
     d = _own(db, user, digest_id)
     keep = d.next_run_at
     try:
-        run = run_digest(db, settings, d, llm=llm, today=today)
+        run = run_digest(db, settings, d, llm=llm, today=today, force=True)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     d.next_run_at = keep
     db.commit()
+    if run is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nothing to send for this item.")
     return _run_out(db, run)
 
 

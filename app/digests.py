@@ -131,8 +131,8 @@ def _headline(rows: list[list[Any]]) -> float | None:
 
 def run_digest(
     db: Session, settings: Settings, digest: Digest, *, llm: LLMProvider | None, today: date,
-    now: datetime | None = None,
-) -> DigestRun:  # fmt: skip
+    now: datetime | None = None, force: bool = False,
+) -> DigestRun | None:  # fmt: skip
     """Re-run the digest's questions on the current data and save the result."""
     now = now or datetime.now(UTC)
     ds = db.get(Dataset, digest.dataset_id)
@@ -176,6 +176,14 @@ def run_digest(
         if prev_path is not None and ds.version == previous_run.dataset_version + 1:
             changes = comparison_counts(compare_versions(prev_path, parquet))
 
+    # An alert (a digest with a condition) only fires when the value crosses the threshold.
+    triggered = force or _condition_met(digest, content)
+    digest.last_run_at = now
+    digest.next_run_at = next_run(digest.cadence, digest.weekday, digest.hour, digest.minute,
+                                  digest.timezone, now)  # fmt: skip
+    if not triggered:
+        return None  # alert didn't fire: no run saved, no notification
+
     run = DigestRun(digest_id=digest.id, workspace_id=digest.workspace_id,
                     dataset_version=ds.version, content=content, changes=changes)  # fmt: skip
     db.add(run)
@@ -186,11 +194,25 @@ def run_digest(
         settings.slack_webhook_url.get_secret_value() if settings.slack_webhook_url else None
     )
     if webhook:
-        post_slack(webhook, digest_slack_text(digest.title, ds.name, content))
-    digest.last_run_at = now
-    digest.next_run_at = next_run(digest.cadence, digest.weekday, digest.hour, digest.minute,
-                                  digest.timezone, now)  # fmt: skip
+        prefix = "\U0001f6a8 Alert: " if digest.condition_op else ""
+        post_slack(webhook, prefix + digest_slack_text(digest.title, ds.name, content))
     return run
+
+
+_COMPARE = {">": lambda a, b: a > b, ">=": lambda a, b: a >= b,
+            "<": lambda a, b: a < b, "<=": lambda a, b: a <= b}  # fmt: skip
+
+
+def _condition_met(digest: Digest, content: list[dict[str, Any]]) -> bool:
+    """A normal digest always 'fires'. An alert fires only when its first question's
+    single value satisfies the condition."""
+    if not digest.condition_op or digest.condition_value is None:
+        return True
+    value = content[0].get("headline") if content else None
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return False
+    compare = _COMPARE.get(digest.condition_op)
+    return bool(compare and compare(float(value), float(digest.condition_value)))
 
 
 def run_due_digests(db: Session, settings: Settings, *, llm: LLMProvider | None,
@@ -203,7 +225,9 @@ def run_due_digests(db: Session, settings: Settings, *, llm: LLMProvider | None,
     for digest in due:
         today = now.astimezone(zone(digest.timezone)).date()
         try:
-            runs.append(run_digest(db, settings, digest, llm=llm, today=today, now=now))
+            run = run_digest(db, settings, digest, llm=llm, today=today, now=now)
+            if run is not None:
+                runs.append(run)
         except Exception:
             log.exception("digest %s failed", digest.id)
             digest.next_run_at = next_run(digest.cadence, digest.weekday, digest.hour,

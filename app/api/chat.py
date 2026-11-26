@@ -262,6 +262,8 @@ def run_ask(
         return _sheets_reply(db, conv, body, ds, user)
     if CODE_REQUEST.search(body.question) and ds.kind == "table":
         return _code_reply(db, conv, body, ds, previous, user)
+    if ds.kind == "table" and is_alert_request(body.question):
+        return _alert_reply(db, conv, body, previous, user, settings)
     if ds.kind == "table" and is_schedule_request(body.question):
         return _schedule_reply(db, conv, body, previous, user, settings)
     if ds.kind == "table" and is_style_request(body.question, previous):
@@ -510,6 +512,88 @@ FIX_REQUEST = re.compile(
     r"|the\s+(data|issues|problems)))?(\s+please)?\W*$",
     re.I,
 )
+
+
+ALERT_RE = re.compile(
+    r"\balert|notify|warn|tell\s+me\s+(if|when)|let\s+me\s+know\s+(if|when)\b", re.I
+)
+_THRESHOLD = re.compile(
+    r"(above|over|greater\s+than|more\s+than|exceeds?|>=?|at\s+least|below|under|less\s+than"
+    r"|fewer\s+than|drops?\s+below|<=?|at\s+most|reaches?|hits?)\s*\$?\s*([\d,]+(?:\.\d+)?)",
+    re.I,
+)
+
+
+def is_alert_request(question: str) -> bool:
+    return bool(ALERT_RE.search(question) and _THRESHOLD.search(question))
+
+
+def _parse_condition(question: str) -> tuple[str, float] | None:
+    m = _THRESHOLD.search(question)
+    if not m:
+        return None
+    word = m.group(1).lower().replace(" ", "")
+    value = float(m.group(2).replace(",", ""))
+    if word in ("below", "under", "lessthan", "fewerthan", "dropsbelow", "dropbelow", "<"):
+        return "<", value
+    if word == "atmost" or word == "<=":
+        return "<=", value
+    if word == "atleast" or word == ">=":
+        return ">=", value
+    return ">", value  # above / over / exceeds / reaches / hits / >
+
+
+def _alert_reply(
+    db: Session, conv: Conversation, body: AskRequest, previous: list[tuple[Message, Message]],
+    user: User, settings: Settings,
+) -> AskResponse:  # fmt: skip
+    """'Alert me if overdue tasks go above 20': watch a single-number answer on a schedule."""
+    from app.api.digests import DigestIn, create_digest
+
+    cond = _parse_condition(body.question)
+    last = next(
+        (
+            a
+            for q, a in reversed(previous)
+            if a.role == "assistant"
+            and a.plan
+            and (a.plan or {}).get("metric") not in (None, "describe", "rows")
+            and not (a.plan or {}).get("group_by")
+            and not (a.plan or {}).get("time_grain")
+        ),
+        None,
+    )
+    if last is None or cond is None:
+        return _save_turn(
+            db, conv, body,
+            content=("Ask a question that gives a single number first (for example “how many "
+                     "overdue tasks”), then say “alert me if it goes above 20”."),
+            status_="answered", plan=None, payload=None, calls=[], user=user,
+        )  # fmt: skip
+    op, value = cond
+    s = parse_schedule(body.question)  # when to check (defaults to daily/weekly 09:00)
+    digest = create_digest(
+        db,
+        user,
+        DigestIn(
+            message_id=last.id,
+            cadence=s.cadence,
+            weekday=s.weekday,
+            hour=s.hour,
+            minute=s.minute,
+            condition_op=op,
+            condition_value=value,
+        ),
+        settings.default_timezone,
+    )
+    words = {">": "goes above", ">=": "reaches", "<": "drops below", "<=": "falls to"}[op]
+    vtxt = f"{value:,.0f}" if float(value).is_integer() else f"{value:,}"
+    content = (
+        f"Alert set: I'll check “{digest.title}” {describe_schedule(digest)} and notify "
+        f"you only when it {words} {vtxt}. Manage it on the Reports page."
+    )
+    return _save_turn(db, conv, body, content=content, status_="answered", plan=None,
+                      payload=None, calls=[], user=user)  # fmt: skip
 
 
 def _schedule_reply(

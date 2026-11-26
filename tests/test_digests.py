@@ -317,3 +317,52 @@ def test_slack_delivery_on_digest_run(app, client, settings, session_factory) ->
         assert len(posts) == 1 and "Total revenue" in posts[0]["text"]
     finally:
         digests_mod.post_slack = orig  # type: ignore[assignment]
+
+
+def test_alert_fires_only_when_condition_met(app, client, settings, session_factory) -> None:  # type: ignore[no-untyped-def]
+    import datetime as _dt
+
+    from app.digests import run_digest
+    from app.models import Digest, DigestRun
+
+    acct = signup(client, "owner@acme.com", workspace="Acme")
+    ds = client.post(
+        "/datasets",
+        headers=acct.headers,
+        files={"file": ("sales.csv", (SAMPLE / "sales_orders.csv").read_bytes())},
+    ).json()["id"]
+    app.dependency_overrides[get_llm] = lambda: FakeLLM([{"metric": "count"}], summary="n")
+    reply = client.post(
+        "/chat/ask",
+        headers=acct.headers,
+        json={"question": "how many orders", "conversation_id": None, "dataset_id": ds},
+    ).json()["reply"]
+    total = reply["answer"]["table"]["rows"][0][0]
+
+    # Alert when count goes above a value well under the real total -> should fire.
+    d = client.post(
+        "/digests",
+        headers=acct.headers,
+        json={"message_id": reply["id"], "condition_op": ">", "condition_value": total - 1},
+    ).json()
+    assert d["condition_op"] == ">"
+    with session_factory() as db:
+        run = run_digest(
+            db, settings, db.get(Digest, d["id"]), llm=None, today=_dt.date(2026, 11, 19)
+        )
+        db.commit()
+        assert run is not None  # fired
+
+    # An alert that can't be met (count above a huge number) -> no run, no notification.
+    d2 = client.post(
+        "/digests",
+        headers=acct.headers,
+        json={"message_id": reply["id"], "condition_op": ">", "condition_value": total + 1_000_000},
+    ).json()
+    with session_factory() as db:
+        run = run_digest(
+            db, settings, db.get(Digest, d2["id"]), llm=None, today=_dt.date(2026, 11, 19)
+        )
+        db.commit()
+        assert run is None  # did not fire
+        assert db.query(DigestRun).filter(DigestRun.digest_id == d2["id"]).count() == 0

@@ -33,6 +33,10 @@ class Digest(IdMixin, TimestampMixin, Base):
     recipients: Mapped[list[str]] = mapped_column(JSON)
     # Optional Slack incoming-webhook URL to also post this digest to a channel.
     slack_webhook: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Optional alert condition on the first question's single value: notify only when
+    # value <op> threshold holds (op one of > >= < <=). None = a normal digest.
+    condition_op: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    condition_value: Mapped[float | None] = mapped_column(nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
