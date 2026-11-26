@@ -35,6 +35,7 @@ def settings(tmp_path: Path) -> Settings:
         data_dir=tmp_path / "data",
         secret_key="test-secret-key-that-is-long-enough-for-hs256",
         questions_per_minute=0,  # tests ask many questions quickly; limits tested separately
+        seed_demo_on_signup=False,  # a clean workspace unless a test opts in
     )
 
 

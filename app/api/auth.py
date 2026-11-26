@@ -64,6 +64,13 @@ def signup(
     audit.record(db, user, "workspace.created", target_type="workspace",
                  target_id=workspace.id)  # fmt: skip
     db.commit()
+    if settings.seed_demo_on_signup:
+        try:
+            from app.api.datasets import seed_demo_dataset
+
+            seed_demo_dataset(settings, db, user)  # a sample dataset to try right away
+        except Exception:  # never block signup on demo seeding
+            db.rollback()
     token = _token_response(settings, user, response)
     return SignupResponse(
         **token.model_dump(),

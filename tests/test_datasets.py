@@ -183,9 +183,11 @@ def test_chunked_body_over_limit_rejected() -> None:
 def test_failed_upload_leaves_no_files(
     client: TestClient, acct: Account, settings: Settings
 ) -> None:
-    upload(client, acct, "bad.csv", b"a,b,c\n")
     ws_dir = settings.data_dir / "workspaces" / acct.workspace["id"] / "datasets"
-    assert not ws_dir.exists() or list(ws_dir.iterdir()) == []
+    before = set(ws_dir.iterdir()) if ws_dir.exists() else set()
+    upload(client, acct, "bad.csv", b"a,b,c\n")
+    after = set(ws_dir.iterdir()) if ws_dir.exists() else set()
+    assert before == after  # a failed upload leaves no new folder behind
 
 
 # --- XLSX ----------------------------------------------------------------------------
@@ -394,3 +396,31 @@ def test_combine_two_sheets_on_a_shared_key(app: Any, client: TestClient, acct: 
     # T-3 has no match on the People sheet -> blank assignee.
     assert by_key["T-3"][table["columns"].index("Assignee")] in (None, "")
     assert "2 of 3 rows matched" in reply["content"]
+
+
+def test_new_signups_get_a_sample_dataset(
+    app: FastAPI, client: TestClient, settings: Settings
+) -> None:
+    from app.core.config import get_settings
+    from app.demo import DEMO_NAME
+    from tests.conftest import signup
+
+    app.dependency_overrides[get_settings] = lambda: settings.model_copy(
+        update={"seed_demo_on_signup": True}
+    )
+    acct = signup(client, "fresh@acme.com", workspace="Fresh")
+    datasets = client.get("/datasets", headers=acct.headers).json()
+    assert any(d["name"] == DEMO_NAME for d in datasets)
+
+
+def test_load_demo_endpoint_is_idempotent(client: TestClient, acct: Account) -> None:
+    from app.demo import DEMO_NAME
+
+    first = client.post("/datasets/demo", headers=acct.headers)
+    assert first.status_code == 201, first.text
+    assert first.json()["name"] == DEMO_NAME
+    assert first.json()["row_count"] == 120
+    # Calling it again returns the same dataset, not a duplicate.
+    client.post("/datasets/demo", headers=acct.headers)
+    names = [d["name"] for d in client.get("/datasets", headers=acct.headers).json()]
+    assert names.count(DEMO_NAME) == 1

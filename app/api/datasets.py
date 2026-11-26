@@ -11,6 +11,7 @@ from typing import Annotated, Literal
 import duckdb
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app import audit, learning
@@ -27,6 +28,7 @@ from app.connectors.csv_xlsx import (
 )
 from app.connectors.profiling import preview_parquet, profile_parquet
 from app.core.config import Settings
+from app.demo import DEMO_FILENAME, DEMO_NAME, demo_csv
 from app.documents.ingest import DOCUMENT_FORMATS, ingest_document, load_passages
 from app.llm.base import LLMCall, LLMProvider, LLMUnavailableError
 from app.llm.embeddings import get_embedder
@@ -194,6 +196,56 @@ def _ingest_sheet(
         log.warning("Extra sheet %r skipped", sheet, exc_info=True)
         storage.delete(workspace_id, dataset_id)
         return None
+
+
+def seed_demo_dataset(settings: Settings, db: Session, user: User) -> Dataset | None:
+    """Add the built-in sample dataset to a workspace (idempotent by name). Returns the
+    dataset, or None if it couldn't be created (never fatal)."""
+    existing = db.scalar(
+        workspace_scoped(select(Dataset).where(Dataset.name == DEMO_NAME), Dataset, user)
+    )
+    if existing is not None:
+        return existing
+    storage = _storage(settings)
+    dataset_id = str(uuid.uuid4())
+    folder = storage.create_dir(user.workspace_id, dataset_id)
+    try:
+        src = folder / "original.csv"
+        src.write_bytes(demo_csv())
+        table = ingest_file(src, "csv", folder / PARQUET_NAME)
+        storage.persist(user.workspace_id, dataset_id)
+        ds = Dataset(
+            id=dataset_id,
+            workspace_id=user.workspace_id,
+            created_by_id=user.id,
+            name=DEMO_NAME,
+            original_filename=DEMO_FILENAME,
+            file_format="csv",
+            sheet_name=None,
+            size_bytes=src.stat().st_size,
+            row_count=table.profile.row_count,
+            columns=[c.to_dict() for c in table.profile.columns],
+            kind="table",
+        )
+        db.add(ds)
+        db.commit()
+        _prepare_search(settings, ds)
+        return ds
+    except Exception:
+        log.warning("Seeding the demo dataset failed", exc_info=True)
+        storage.delete(user.workspace_id, dataset_id)
+        db.rollback()
+        return None
+
+
+@router.post("/demo", response_model=UploadOut, status_code=status.HTTP_201_CREATED)
+def load_demo_dataset(user: CurrentUser, db: DbSession, settings: AppSettings) -> UploadOut:
+    """Add the built-in sample dataset (so you can try AskData without uploading)."""
+    ds = seed_demo_dataset(settings, db, user)
+    if ds is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Couldn't load the sample data.")
+    return UploadOut(**DatasetOut.model_validate(ds).model_dump(), sheet_names=[],
+                     detected_encoding="utf-8", extra_sheets=[])  # fmt: skip
 
 
 @router.post("", response_model=UploadOut, status_code=status.HTTP_201_CREATED)

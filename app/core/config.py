@@ -88,6 +88,8 @@ class Settings(BaseSettings):
 
     # Questions per user per minute (0 = no limit). Protects free LLM quotas.
     questions_per_minute: int = Field(default=10, ge=0)
+    # Give every new signup the built-in sample dataset (off in tests).
+    seed_demo_on_signup: bool = True
 
     # Datasets. "local" keeps files on disk; "s3" also stores them in S3-compatible
     # object storage (e.g. Neon) so they survive restarts on hosts with temporary disks.
