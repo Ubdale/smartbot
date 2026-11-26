@@ -2,6 +2,7 @@
 
 from app.core.db import Base
 from app.models.chat import Conversation, Message, UsageEvent
+from app.models.dashboard import Dashboard
 from app.models.dataset import Dataset
 from app.models.digest import Digest, DigestRun
 from app.models.learning import GlossaryTerm, LearnedExample
@@ -15,6 +16,7 @@ __all__ = [
     "AuditEvent",
     "Base",
     "Conversation",
+    "Dashboard",
     "Dataset",
     "Digest",
     "DigestRun",
